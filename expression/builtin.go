@@ -724,6 +724,9 @@ var funcs = map[string]functionClass{
 	ast.TiDBIsDDLOwner: &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
 	ast.TiDBParseTso:   &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
 	ast.TiDBDecodePlan: &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodePlan, 1, 1}},
+
+	// SQLSmith internal function
+	ast.TiDBSQLSmith: &tidbSqlsmithFunctionClass{baseFunctionClass{ast.TiDBSQLSmith, 0, 0}},
 }
 
 // IsFunctionSupported check if given function name is a builtin sql function.
