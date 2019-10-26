@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"time"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -18,9 +19,9 @@ func GenCreateTable(columnName int) (sql string, tableName string, columnsType [
 			"INT",
 			"BIGINT",
 			"CHAR(32)",
-			"CHAR(256)",
+			"CHAR(255)",
 			"VARCHAR(32)",
-			"VARCHAR(256)",
+			"VARCHAR(255)",
 			"TEXT",
 			"BLOB",
 			"DATETIME",
@@ -58,13 +59,13 @@ func GenInsertTable(tableName string, columnsType []string) string {
 			"CHAR(32)": func() interface{} {
 				return RandStringBytesMaskImpr(rand.Intn(32))
 			},
-			"CHAR(256)": func() interface{} {
+			"CHAR(255)": func() interface{} {
 				return RandStringBytesMaskImpr(rand.Intn(256))
 			},
 			"VARCHAR(32)": func() interface{} {
 				return RandStringBytesMaskImpr(rand.Intn(32))
 			},
-			"VARCHAR(256)": func() interface{} {
+			"VARCHAR(255)": func() interface{} {
 				return RandStringBytesMaskImpr(rand.Intn(32))
 			},
 			"TEXT": func() interface{} {
@@ -82,13 +83,14 @@ func GenInsertTable(tableName string, columnsType []string) string {
 		}
 		sqlBuf bytes.Buffer
 	)
-	sqlBuf.WriteString(fmt.Sprintf("INSERT INTO %s VALUES(", tableName))
+	timestamp := time.Now().UTC().UnixNano()
+	sqlBuf.WriteString(fmt.Sprintf("INSERT INTO `%s` VALUES( %d, ", tableName, timestamp))
 	for _, v := range columnsType {
 		c := fmt.Sprintf(" %v, ", genSet[v]())
 		sqlBuf.WriteString(c)
 	}
-	sqlBuf.WriteString(fmt.Sprintf(")"))
-	return sqlBuf.String()
+	str := sqlBuf.String()
+	return fmt.Sprintf("%s )", strings.TrimRight(str, ", "))
 }
 
 func GenDropTable(tableName string) string {
