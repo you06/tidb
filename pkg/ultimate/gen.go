@@ -18,9 +18,9 @@ func GenCreateTable(columnName int) (sql string, tableName string, columnsType [
 			"INT",
 			"BIGINT",
 			"CHAR(32)",
-			"CHAR(256)",
+			"CHAR(255)",
 			"VARCHAR(32)",
-			"VARCHAR(256)",
+			"VARCHAR(255)",
 			"TEXT",
 			"BLOB",
 			"DATETIME",
@@ -58,13 +58,13 @@ func GenInsertTable(tableName string, columnsType []string) string {
 			"CHAR(32)": func() interface{} {
 				return RandStringBytesMaskImpr(rand.Intn(32))
 			},
-			"CHAR(256)": func() interface{} {
+			"CHAR(255)": func() interface{} {
 				return RandStringBytesMaskImpr(rand.Intn(256))
 			},
 			"VARCHAR(32)": func() interface{} {
 				return RandStringBytesMaskImpr(rand.Intn(32))
 			},
-			"VARCHAR(256)": func() interface{} {
+			"VARCHAR(255)": func() interface{} {
 				return RandStringBytesMaskImpr(rand.Intn(32))
 			},
 			"TEXT": func() interface{} {
