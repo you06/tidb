@@ -1116,6 +1116,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				_, err = s.execute(ctx, sql)
 				if err != nil {
 					errNum++
+					fmt.Printf("error %+v\n",err)
 					continue
 				}
 				fmt.Print("4\n")
