@@ -6,7 +6,6 @@ import (
 	"math/rand"
 	"time"
 	"strings"
-	"strconv"
 
 	"github.com/google/uuid"
 
@@ -84,7 +83,7 @@ func GenInsertTable(tableName string, columnsType []string) string {
 		}
 		sqlBuf bytes.Buffer
 	)
-	timestamp := strconv.FormatInt(time.Now().UTC().UnixNano(), 10)
+	timestamp := time.Now().UTC().UnixNano()
 	sqlBuf.WriteString(fmt.Sprintf("INSERT INTO `%s` VALUES( %d, ", tableName, timestamp))
 	for _, v := range columnsType {
 		c := fmt.Sprintf(" %v, ", genSet[v]())
