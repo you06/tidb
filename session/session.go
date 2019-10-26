@@ -1105,6 +1105,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				sql,tableName ,columnsType := ultimate.GenCreateTable(tableCol)
 				_, err := s.execute(ctx, sql)
 				if err != nil {
+					fmt.Printf("error %+v",err)
 					errNum++
 					continue
 				}
