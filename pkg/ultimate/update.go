@@ -7,5 +7,5 @@ import (
 
 func GenUpdateSQL() string {
 	timestamp := time.Now().UTC().UnixNano()
-	return fmt.Sprintf("update ultimate.data set update_data='%s' where id='update'",timestamp)
+	return fmt.Sprintf("update data set update_data='%s' where id='update'",timestamp)
 }
