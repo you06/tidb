@@ -1067,6 +1067,11 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		return nil, err
 	}
 
+	if sql == "bench" {
+		sql = "show databases;"
+		return s.execute(ctx, sql)
+	}
+
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 
 	// Step1: Compile query string to abstract syntax trees(ASTs).
