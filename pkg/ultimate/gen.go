@@ -83,7 +83,7 @@ func GenInsertTable(tableName string, columnsType []string) string {
 		}
 		sqlBuf bytes.Buffer
 	)
-	sqlBuf.WriteString(fmt.Sprintf("INSERT INTO %s VALUES(", tableName))
+	sqlBuf.WriteString(fmt.Sprintf("INSERT INTO `%s` VALUES(", tableName))
 	for _, v := range columnsType {
 		c := fmt.Sprintf(" %v, ", genSet[v]())
 		sqlBuf.WriteString(c)
