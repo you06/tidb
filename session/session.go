@@ -1127,6 +1127,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			}
 			fmt.Print("6\n")
 			sql = fmt.Sprintf("select * from ultimate.wide_table where id = '%s'",uuid)
+			fmt.Println(sql)
 			return s.execute(ctx, sql)
 		}
 		return nil, nil
