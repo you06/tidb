@@ -1090,13 +1090,13 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	if sql == "ultimate wide_table" {
 		uuid := "x"
-		sql = "use ultimate"
-		s.execute(ctx, sql)
 		totalRun := rand.Int31n(10000)
 		errNum := 0
 		successCnt := 0
 		var i int32 = 0
 		for ; i< totalRun; i++ {
+			sql = "use test"
+			s.execute(ctx, sql)
 			tableCol := rand.Intn(1000) + 1
 			sql,_ ,_ := ultimate.GenCreateTable(tableCol)
 			_, err := s.execute(ctx, sql)
@@ -1106,7 +1106,10 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				errNum++
 				continue
 			}
+
 			successCnt++
+			sql = "use ultimate"
+			s.execute(ctx, sql)
 			sql = fmt.Sprintf("UPDATE  wide_table set total_count='%d', error='%d', success='%d'  where id='%s';",totalRun,errNum,successCnt,uuid)
 			s.execute(ctx, sql)
 		}
@@ -1115,14 +1118,14 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	}
 
 	if sql == "ultimate update" {
-		sql = "use ultimate"
 		uuid := "x"
-		s.execute(ctx, sql)
 		var i = 0
 		successCnt := 0
 		errNum := 0
 		totalRun := 10000
 		for ; i < totalRun; i++ {
+			sql = "use test"
+			s.execute(ctx, sql)
 			sql = ultimate.GenUpdateSQL()
 			_, err := s.execute(ctx, sql)
 			if err != nil {
@@ -1131,6 +1134,8 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				continue
 			}
 			successCnt++
+			sql = "use ultimate"
+			s.execute(ctx, sql)
 			sql = fmt.Sprintf("UPDATE  ultimate.update_data set total_count='%d', error='%d', success='%d'  where id='%s';",totalRun,errNum,successCnt,uuid)
 			s.execute(ctx, sql)
 		}
