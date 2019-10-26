@@ -73,6 +73,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/bench"
 	"github.com/pingcap/tidb/pkg/ultimate"
+	"github.com/pingcap/tidb/pkg/sqlsmith"
 )
 
 var (
@@ -1097,6 +1098,57 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			return s.execute(ctx, sql)
 		}
 		return nil, nil
+	}
+
+	if strings.HasPrefix(sql, "sqlsmith") {
+		tables, _, err := s.ExecRestrictedSQL("SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE FROM information_schema.tables")
+		if err != nil {
+			fmt.Println(err)
+			return nil, err
+		}
+		
+		var columns [][5]string
+		for _, table := range tables {
+			dbName := table.GetString(0)
+			tableName := table.GetString(1)
+			tableType := table.GetString(2)
+			if dbName == "mysql" || dbName == "PERFORMANCE_SCHEMA" || dbName == "INFORMATION_SCHEMA" {
+				continue;
+			}
+			cols, _, err := s.ExecRestrictedSQL(fmt.Sprintf("DESC %s.%s", dbName, tableName))
+			if err != nil {
+				fmt.Println(err)
+				return nil, err
+			}
+			for _, col := range cols {
+				columns = append(columns, [5]string{
+					dbName,
+					tableName,
+					tableType,
+					col.GetString(0),
+					col.GetString(1),
+				})
+			}
+		}
+		// cols, _, err := s.ExecRestrictedSQL("SELECT DATABASE()")
+		// fmt.Println(cols, cols[0], len(cols), cols[0].Len(), err)
+		currentDB := s.sessionVars.CurrentDB
+		sql = fmt.Sprintf("select lower(\"%s\") as sqlsmith", sqlsmith.New(sql, currentDB, columns))
+
+		// rs := res[0]
+		// req := rs.NewChunk()
+		// for {
+		// 	err := rs.Next(ctx, req)
+		// 	if err != nil || req.NumRows() == 0 {
+		// 		return rows, err
+		// 	}
+		// 	iter := chunk.NewIterator4Chunk(req)
+		// 	for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+		// 		rows = append(rows, r)
+		// 	}
+		// 	req = chunk.Renew(req, se.sessionVars.MaxChunkSize)
+		// }
+		// fmt.Println(req)
 	}
 
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
