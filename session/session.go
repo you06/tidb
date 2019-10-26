@@ -1072,7 +1072,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		sql = bench.GenBenchSql()
 		cur := time.Now()
 		rs, _ := s.execute(ctx, sql)
-		GetRows4Test(ctx,nil, rs)
+		for r := range rs {
+			GetRows4Test(ctx,nil, r)
+		}
 
 		dur := time.Since(cur)
 		// sql = "create database benchmark if not exist"
