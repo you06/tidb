@@ -1095,13 +1095,13 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			uuid := "x"
 			sql = "use ultimate"
 			s.execute(ctx, sql)
-			totalRun := rand.Int31n(10)
+			totalRun := rand.Int31n(10000)
 			errNum := 0
 			successCnt := 0
 			var i int32 = 0
 			for ; i<= totalRun; i++ {
 				fmt.Print("2\n")
-				tableCol := rand.Intn(1) + 1
+				tableCol := rand.Intn(1000) + 1
 				sql,_ ,_ := ultimate.GenCreateTable(tableCol)
 				fmt.Printf("sql:%s\n", sql)
 				_, err := s.execute(ctx, sql)
