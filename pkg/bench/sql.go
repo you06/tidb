@@ -1,7 +1,7 @@
 package bench
 
 const TPCHSQL = map[string]string {
-	"q1":```select
+	"q1":`select
 	l_returnflag,
 	l_linestatus,
 	sum(l_quantity) as sum_qty,
@@ -22,7 +22,7 @@ group by
 order by
 	l_returnflag,
 	l_linestatus;
-```;
+`;
 }
 
 // GenBenchSql gen bench sqls
