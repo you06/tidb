@@ -11,7 +11,7 @@ import (
 )
 
 // GenCreateTable gens create table
-func GenCreateTable(database string, columnName int) (sql string, tableName string, columnsType []string) {
+func GenCreateTable(columnName int) (sql string, tableName string, columnsType []string) {
 	var (
 		columnTypes = []string{
 			"TINYINT",
@@ -29,7 +29,7 @@ func GenCreateTable(database string, columnName int) (sql string, tableName stri
 		sqlBuf bytes.Buffer
 	)
 	tableName = uuid.New().String()
-	sqlBuf.WriteString(fmt.Sprintf("CREATE TABLE IF NOT EXIST `test.%s` ( id bigint, ", tableName))
+	sqlBuf.WriteString(fmt.Sprintf("CREATE TABLE IF NOT EXISTS `%s` ( id bigint, ", tableName))
 	for i := 0; i < columnName; i++ {
 		columnType := columnTypes[rand.Intn(len(columnTypes))]
 		columnsType = append(columnsType, columnType)
