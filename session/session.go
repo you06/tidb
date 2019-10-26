@@ -1102,7 +1102,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			for ; i<= totalRun; i++ {
 				fmt.Print("2\n")
 				tableCol := rand.Intn(1) + 1
-				sql,tableName ,columnsType := ultimate.GenCreateTable(tableCol)
+				sql,_ ,_ := ultimate.GenCreateTable(tableCol)
 				fmt.Printf("sql:%s\n", sql)
 				_, err := s.execute(ctx, sql)
 				if err != nil {
