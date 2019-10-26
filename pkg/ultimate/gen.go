@@ -29,7 +29,7 @@ func GenCreateTable(database string, columnName int) (sql string, tableName stri
 		sqlBuf bytes.Buffer
 	)
 	tableName = uuid.New().String()
-	sqlBuf.WriteString(fmt.Sprintf("CREATE TABLE IF NOT EXIST `%s.%s` ( id bigint, ",database, tableName))
+	sqlBuf.WriteString(fmt.Sprintf("CREATE TABLE IF NOT EXIST `test.%s` ( id bigint, ", tableName))
 	for i := 0; i < columnName; i++ {
 		columnType := columnTypes[rand.Intn(len(columnTypes))]
 		columnsType = append(columnsType, columnType)
