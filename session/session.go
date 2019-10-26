@@ -1071,6 +1071,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		return nil, err
 	}
 
+	fmt.Println("1")
 	if sql == "bench" {
 		sql = bench.GenBenchSql()
 		cur := time.Now()
@@ -1087,7 +1088,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		sql = "select * from benchmark.tpch"
 		return s.execute(ctx, sql)
 	}
-
+	fmt.Println("2")
 	if sql == "ultimate wide_table" {
 		uuid := "x"
 		totalRun := rand.Int31n(10000)
@@ -1117,6 +1118,8 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		return s.execute(ctx, sql)
 	}
 
+	fmt.Println("3")
+
 	if sql == "ultimate update" {
 		uuid := "x"
 		var i = 0
@@ -1142,6 +1145,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		sql = fmt.Sprintf("select * from ultimate.update_data where id = '%s'",uuid)
 		return s.execute(ctx, sql)
 	}
+	fmt.Println("4")
 
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 
