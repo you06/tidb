@@ -1091,14 +1091,15 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	if sql == "ultimate" {
 		switch rand.Int31n(3) {
 		case 1:
-			uuid = "x"
+			uuid := "x"
 			sql = "use ultimate"
 			s.execute(ctx, sql)
 			totalRun := rand.Int31n(10)
 			errNum := 0
 			successCnt := 0
-			for i := 0; i<= totalRun; i++ {
-				tableCol := rand.Int31n(1000)
+			var i int32 = 0
+			for ; i<= totalRun; i++ {
+				tableCol := rand.Intn(1000)
 				sql,tableName ,columnsType := ultimate.GenCreateTable(tableCol)
 				_, err := s.execute(ctx, sql)
 				if err != nil {
@@ -1106,7 +1107,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 					continue
 				}
 				sql = ultimate.GenInsertTable(tableName, columnsType)
-				_, err := s.execute(ctx, sql)
+				_, err = s.execute(ctx, sql)
 				if err != nil {
 					errNum++
 					continue
