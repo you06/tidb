@@ -89,6 +89,10 @@ func GenInsertTable(tableName string, columnsType []string) string {
 	return sqlBuf.String()
 }
 
+func GenDropTable(tableName string) string {
+	return fmt.Sprintf("DROP TABLE %s", tableName)
+}
+
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456"
 const (
 	letterIdxBits = 6                    // 6 bits to represent a letter index
