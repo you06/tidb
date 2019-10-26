@@ -87,6 +87,7 @@ func GenInsertTable(tableName string, columnsType []string) string {
 		c := fmt.Sprintf(" %v, ", genSet[v]())
 		sqlBuf.WriteString(c)
 	}
+	sqlBuf = bytes.TrimRight(sqlBuf,", ")
 	sqlBuf.WriteString(fmt.Sprintf(")"))
 	return sqlBuf.String()
 }
