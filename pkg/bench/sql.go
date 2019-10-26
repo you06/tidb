@@ -27,5 +27,5 @@ order by
 
 // GenBenchSql gen bench sqls
 func GenBenchSql() string {
-	return TPCHSQL
+	return TPCHSQL["q1"]
 }
