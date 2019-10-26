@@ -799,7 +799,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 // The most frequently used command is ComQuery.
 func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	span := opentracing.StartSpan("server.dispatch")
-
+	fmt.Println("I am in dispatch")
 	t := time.Now()
 	cmd := data[0]
 	data = data[1:]
