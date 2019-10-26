@@ -1,6 +1,6 @@
 package bench
 
-const TPCHSQL = map[string]string {
+var tpchSQL := map[string]string {
 	"q1":`select
 	l_returnflag,
 	l_linestatus,
@@ -27,5 +27,5 @@ order by
 
 // GenBenchSql gen bench sqls
 func GenBenchSql() string {
-	return TPCHSQL["q1"]
+	return tpchSQL["q1"]
 }
