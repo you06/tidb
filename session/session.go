@@ -1073,6 +1073,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	fmt.Println("1")
 	if sql == "bench" {
+		fmt.Println("1.1")
 		sql = bench.GenBenchSql()
 		cur := time.Now()
 		rs, _ := s.execute(ctx, sql)
@@ -1090,6 +1091,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	}
 	fmt.Println("2")
 	if sql == "ultimate wide_table" {
+		fmt.Println("2.1")
 		uuid := "x"
 		totalRun := rand.Int31n(10000)
 		errNum := 0
@@ -1121,6 +1123,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	fmt.Println("3")
 
 	if sql == "ultimate update" {
+		fmt.Println("3.1")
 		uuid := "x"
 		var i = 0
 		successCnt := 0
