@@ -1090,7 +1090,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		return s.execute(ctx, sql)
 	}
 	fmt.Println("2")
-	if sql == "ultimate wide_table" {
+	if sql == "tidb_test wide_table" {
 		fmt.Println("2.1")
 		uuid := "x"
 		totalRun := rand.Int31n(10000)
@@ -1122,7 +1122,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	fmt.Println("3")
 
-	if sql == "ultimate update" {
+	if sql == "tidb_test update" {
 		fmt.Println("3.1")
 		uuid := "x"
 		var i = 0
