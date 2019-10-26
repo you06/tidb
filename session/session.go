@@ -28,7 +28,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"math"
+	"math/rand"
 
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
@@ -1087,7 +1087,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	}
 
 	if sql == "ultimate" {
-		switch math.Int31n(3) {
+		switch rand.Int31n(3) {
 		case 1:
 			sql = "show databases"
 			return s.execute(ctx, sql)
