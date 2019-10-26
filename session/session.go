@@ -1078,11 +1078,20 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 		dur := time.Since(cur)
 		// sql = "create database benchmark if not exist"
-		// sql = "create table tpch (query varchar(255), spendtime varchar(255));
+		// sql = "create table tpch (query varchar(255), spendtime varchar(255), time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
 		sql = fmt.Sprintf("insert into benchmark.tpch (query, spendtime) values ('q1', '%s');",dur)
 		s.execute(ctx, sql)
 		sql = "select * from benchmark.tpch"
 		return s.execute(ctx, sql)
+	}
+
+	if sql == "ultimate" {
+		switch math.Int31n(3) {
+		case 1:
+			sql = "show databases"
+			return s.execute(ctx, sql)
+		}
+		return nil, nil
 	}
 
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
