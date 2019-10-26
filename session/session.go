@@ -68,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tidb/pkg/bench"
 	"go.uber.org/zap"
 )
 
@@ -1068,7 +1069,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	}
 
 	if sql == "bench" {
-		sql = "show databases;"
+		sql = bench.GenBenchSql()
 		return s.execute(ctx, sql)
 	}
 
