@@ -13,7 +13,7 @@ var tpchSQL = map[string]string {
 	avg(l_discount) as avg_disc,
 	count(*) as count_order
 from
-	lineitem
+	bench.lineitem
 where
 	l_shipdate <= date_sub('1998-12-01', interval 108 day)
 group by
