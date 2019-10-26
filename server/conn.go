@@ -1166,6 +1166,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		} else {
 			err = cc.writeMultiResultset(ctx, rs, false)
 		}
+		fmt.Println(len(rs), err)
 	} else {
 		fmt.Println("handle Query3.2")
 		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
