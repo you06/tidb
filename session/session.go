@@ -1103,6 +1103,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				fmt.Print("2")
 				tableCol := rand.Intn(1) + 1
 				sql,tableName ,columnsType := ultimate.GenCreateTable(tableCol)
+				fmt.Printf("sql:%s", sql)
 				_, err := s.execute(ctx, sql)
 				if err != nil {
 					fmt.Printf("error %+v",err)
@@ -1111,6 +1112,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				}
 				fmt.Print("3")
 				sql = ultimate.GenInsertTable(tableName, columnsType)
+				fmt.Printf("sql:%s", sql)
 				_, err = s.execute(ctx, sql)
 				if err != nil {
 					errNum++
