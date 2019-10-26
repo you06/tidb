@@ -1100,31 +1100,31 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			successCnt := 0
 			var i int32 = 0
 			for ; i<= totalRun; i++ {
-				fmt.Print("2")
+				fmt.Print("2\n")
 				tableCol := rand.Intn(1) + 1
 				sql,tableName ,columnsType := ultimate.GenCreateTable(tableCol)
-				fmt.Printf("sql:%s", sql)
+				fmt.Printf("sql:%s\n", sql)
 				_, err := s.execute(ctx, sql)
 				if err != nil {
-					fmt.Printf("error %+v",err)
+					fmt.Printf("error %+v\n",err)
 					errNum++
 					continue
 				}
-				fmt.Print("3")
+				fmt.Print("3\n")
 				sql = ultimate.GenInsertTable(tableName, columnsType)
-				fmt.Printf("sql:%s", sql)
+				fmt.Printf("sql:%s\n", sql)
 				_, err = s.execute(ctx, sql)
 				if err != nil {
 					errNum++
 					continue
 				}
-				fmt.Print("4")
+				fmt.Print("4\n")
 				successCnt++
 				sql = fmt.Sprintf("INSERT INTO wide_table (total_count, error, success) values ('%d','%d','%d') where id='%s';",totalRun,errNum,successCnt,uuid)
 				s.execute(ctx, sql)
-				fmt.Print("5")
+				fmt.Print("5\n")
 			}
-			fmt.Print("6")
+			fmt.Print("6\n")
 			sql = fmt.Sprintf("select * from ultimate.wide_table where id = '%s'",uuid)
 			return s.execute(ctx, sql)
 		case 1:
