@@ -1089,7 +1089,36 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	}
 
 	if sql == "ultimate" {
-		switch rand.Int31n(3) {
+		switch rand.Int31n(1) {
+		case 0:
+			uuid := "x"
+			sql = "use ultimate"
+			s.execute(ctx, sql)
+			totalRun := rand.Int31n(10)
+			errNum := 0
+			successCnt := 0
+			var i int32 = 0
+			for ; i<= totalRun; i++ {
+				tableCol := rand.Intn(1000)
+				sql,tableName ,columnsType := ultimate.GenCreateTable(tableCol)
+				_, err := s.execute(ctx, sql)
+				if err != nil {
+					errNum++
+					continue
+				}
+				sql = ultimate.GenInsertTable(tableName, columnsType)
+				_, err = s.execute(ctx, sql)
+				if err != nil {
+					errNum++
+					continue
+				}
+				successCnt++
+				sql = fmt.Sprintf("INSERT INTO wide_table (total_count, error, success) values ('%d','%d','%d') where id='%s';",totalRun,errNum,successCnt,uuid)
+				s.execute(ctx, sql)
+			}
+
+			sql = fmt.Sprintf("select * from ultimate.wide_table where id = '%s'",uuid)
+			return s.execute(ctx, sql)
 		case 1:
 			uuid := "x"
 			sql = "use ultimate"
