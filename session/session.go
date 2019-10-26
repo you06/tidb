@@ -1116,9 +1116,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	if sql == "ultimate update" {
 		sql = "use ultimate"
-		uuid = "x"
+		uuid := "x"
 		s.execute(ctx, sql)
-		var i int32 = 0
+		var i = 0
 		successCnt := 0
 		errNum := 0
 		totalRun := 10000
