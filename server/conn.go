@@ -847,6 +847,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			data = data[:len(data)-1]
 			dataStr = string(hack.String(data))
 		}
+		fmt.Println("I am in com query")
 		return cc.handleQuery(ctx, dataStr)
 	case mysql.ComPing:
 		return cc.writeOK()
