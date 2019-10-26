@@ -1091,7 +1091,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	if sql == "ultimate" {
 		switch rand.Int31n(3) {
 		case 1:
-			sql = ultimate.GenCreateTable("ultimate",1000)
+			sql,_,_ := ultimate.GenCreateTable("ultimate",1000)
 			return s.execute(ctx, sql)
 		}
 		return nil, nil
