@@ -1144,23 +1144,30 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 // There is a special query `load data` that does not return result, which is handled differently.
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
+	fmt.Println("handle Query1")
 	rs, err := cc.ctx.Execute(ctx, sql)
 	if err != nil {
+		fmt.Println("handle Query1.1")
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return err
 	}
+	fmt.Println("handle Query2")
 	status := atomic.LoadInt32(&cc.status)
 	if rs != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
+		fmt.Println("handle Query2.1")
 		killConn(cc)
 		return executor.ErrQueryInterrupted
 	}
+	fmt.Println("handle Query3")
 	if rs != nil {
+		fmt.Println("handle Query3.1")
 		if len(rs) == 1 {
 			err = cc.writeResultset(ctx, rs[0], false, 0, 0)
 		} else {
 			err = cc.writeMultiResultset(ctx, rs, false)
 		}
 	} else {
+		fmt.Println("handle Query3.2")
 		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
 		if loadDataInfo != nil {
 			defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
@@ -1168,9 +1175,10 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				return err
 			}
 		}
-
+		fmt.Println("handle Query3.2.1")
 		loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
 		if loadStats != nil {
+			fmt.Println("handle Query3.2.1.2")
 			defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
 			if err = cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
 				return err
