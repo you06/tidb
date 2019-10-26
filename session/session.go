@@ -1117,7 +1117,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				s.execute(ctx, sql)
 			}
 
-			sql = fmt.Sprintf("select * from benchmark.wide_table where id = '%s'",uuid)
+			sql = fmt.Sprintf("select * from ultimate.wide_table where id = '%s'",uuid)
 			return s.execute(ctx, sql)
 		}
 		return nil, nil
