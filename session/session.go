@@ -1072,7 +1072,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		return nil, err
 	}
 
+	fmt.Println("1")
 	if sql == "bench" {
+		fmt.Println("1.1")
 		sql = bench.GenBenchSql()
 		cur := time.Now()
 		rs, _ := s.execute(ctx, sql)
@@ -1088,17 +1090,66 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		sql = "select * from benchmark.tpch"
 		return s.execute(ctx, sql)
 	}
+	fmt.Println("2")
+	if sql == "tidb_test wide_table" {
+		fmt.Println("2.1")
+		uuid := "x"
+		totalRun := rand.Int31n(10000)
+		errNum := 0
+		successCnt := 0
+		var i int32 = 0
+		for ; i< totalRun; i++ {
+			sql = "use test"
+			s.execute(ctx, sql)
+			tableCol := rand.Intn(510) + 1
+			sql,_ ,_ := ultimate.GenCreateTable(tableCol)
+			_, err := s.execute(ctx, sql)
+			if err != nil {
+				fmt.Printf("sql:%s\n", sql)
+				fmt.Printf("error %+v\n",err)
+				errNum++
+				continue
+			}
 
-	if sql == "ultimate" {
-		switch rand.Int31n(3) {
-		case 1:
+			successCnt++
 			sql = "use ultimate"
 			s.execute(ctx, sql)
-			sql,_,_ := ultimate.GenCreateTable(1)
-			return s.execute(ctx, sql)
+			sql = fmt.Sprintf("UPDATE  wide_table set total_count='%d', error='%d', success='%d'  where id='%s';",totalRun,errNum,successCnt,uuid)
+			s.execute(ctx, sql)
 		}
-		return nil, nil
+		sql = fmt.Sprintf("select * from ultimate.wide_table where id = '%s'",uuid)
+		return s.execute(ctx, sql)
 	}
+
+	fmt.Println("3")
+
+	if sql == "tidb_test update" {
+		fmt.Println("3.1")
+		uuid := "x"
+		var i = 0
+		successCnt := 0
+		errNum := 0
+		totalRun := 10000
+		for ; i < totalRun; i++ {
+			sql = "use test"
+			s.execute(ctx, sql)
+			sql = ultimate.GenUpdateSQL()
+			_, err := s.execute(ctx, sql)
+			if err != nil {
+				fmt.Printf("error %+v\n",err)
+				errNum++
+				continue
+			}
+			successCnt++
+			sql = "use ultimate"
+			s.execute(ctx, sql)
+			sql = fmt.Sprintf("UPDATE  ultimate.update_data set total_count='%d', error='%d', success='%d'  where id='%s';",totalRun,errNum,successCnt,uuid)
+			s.execute(ctx, sql)
+		}
+		sql = fmt.Sprintf("select * from ultimate.update_data where id = '%s'",uuid)
+		return s.execute(ctx, sql)
+	}
+	fmt.Println("4")
 
 	if strings.HasPrefix(sql, "sqlsmith") {
 		tables, _, err := s.ExecRestrictedSQL("SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE FROM information_schema.tables")
