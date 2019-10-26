@@ -1100,7 +1100,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		for ; i< totalRun; i++ {
 			sql = "use test"
 			s.execute(ctx, sql)
-			tableCol := rand.Intn(1000) + 1
+			tableCol := rand.Intn(510) + 1
 			sql,_ ,_ := ultimate.GenCreateTable(tableCol)
 			_, err := s.execute(ctx, sql)
 			if err != nil {
