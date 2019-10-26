@@ -28,6 +28,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"math"
 
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
