@@ -29,14 +29,14 @@ func GenCreateTable(database string, columnName int) (sql string, tableName stri
 		sqlBuf bytes.Buffer
 	)
 	tableName = uuid.New().String()
-	sqlBuf.WriteString(fmt.Sprintf("CREATE TABLE IF NOT EXIST `%s.%s` ( id bigint, ",database, tableName))
+	sqlBuf.WriteString(fmt.Sprintf("CREATE TABLE IF NOT EXIST `%s.%s` ( `id` bigint, ",database, tableName))
 	for i := 0; i < columnName; i++ {
 		columnType := columnTypes[rand.Intn(len(columnTypes))]
 		columnsType = append(columnsType, columnType)
 		c := fmt.Sprintf(" %s %s,", fmt.Sprintf("column%d", i), columnType)
 		sqlBuf.WriteString(c)
 	}
-	sqlBuf.WriteString(fmt.Sprintf("PRIMARY KEY id)CHARSET=utf8mb4;"))
+	sqlBuf.WriteString(fmt.Sprintf("PRIMARY KEY (id)) CHARSET=utf8mb4;"))
 	return sqlBuf.String(), tableName, columnsType
 }
 
