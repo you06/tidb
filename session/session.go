@@ -1121,7 +1121,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				// }
 				// fmt.Print("4\n")
 				successCnt++
-				sql = fmt.Sprintf("INSERT INTO wide_table (total_count, error, success) values ('%d','%d','%d') where id='%s';",totalRun,errNum,successCnt,uuid)
+				sql = fmt.Sprintf("UPDATE INTO wide_table (total_count, error, success) values ('%d','%d','%d') where id='%s';",totalRun,errNum,successCnt,uuid)
 				s.execute(ctx, sql)
 				fmt.Print("5\n")
 			}
