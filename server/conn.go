@@ -1307,10 +1307,12 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			} else {
 				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i))
 			}
+			fmt.Println(string(data), err)
 			if err != nil {
 				return err
 			}
 			if err = cc.writePacket(data); err != nil {
+				fmt.Println(err)
 				return err
 			}
 		}
