@@ -68,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tidb/pkg/bench"
 	"go.uber.org/zap"
 )
 
@@ -1065,6 +1066,23 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return nil, err
+	}
+
+	if sql == "bench" {
+		sql = bench.GenBenchSql()
+		cur := time.Now()
+		rs, _ := s.execute(ctx, sql)
+		for _, r := range rs {
+			GetRows4Test(ctx,nil, r)
+		}
+
+		dur := time.Since(cur)
+		// sql = "create database benchmark if not exist"
+		// sql = "create table tpch (query varchar(255), spendtime varchar(255));
+		sql = fmt.Sprintf("insert into benchmark.tpch (query, spendtime) values ('q1', '%s');",dur)
+		s.execute(ctx, sql)
+		sql = "select * from benchmark.tpch"
+		return s.execute(ctx, sql)
 	}
 
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
