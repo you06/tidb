@@ -1096,7 +1096,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		errNum := 0
 		successCnt := 0
 		var i int32 = 0
-		for ; i<= totalRun; i++ {
+		for ; i< totalRun; i++ {
 			tableCol := rand.Intn(1000) + 1
 			sql,_ ,_ := ultimate.GenCreateTable(tableCol)
 			_, err := s.execute(ctx, sql)
@@ -1122,7 +1122,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		successCnt := 0
 		errNum := 0
 		totalRun := 10000
-		for ; i <= totalRun; i++ {
+		for ; i < totalRun; i++ {
 			sql = ultimate.GenUpdateSQL()
 			_, err := s.execute(ctx, sql)
 			if err != nil {
@@ -1134,7 +1134,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			sql = fmt.Sprintf("UPDATE  ultimate.update_data set total_count='%d', error='%d', success='%d'  where id='%s';",totalRun,errNum,successCnt,uuid)
 			s.execute(ctx, sql)
 		}
-		sql = fmt.Sprintf("select * from ultimate.update where id = '%s'",uuid)
+		sql = fmt.Sprintf("select * from ultimate.update_data where id = '%s'",uuid)
 		return s.execute(ctx, sql)
 	}
 
