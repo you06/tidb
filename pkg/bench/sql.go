@@ -1,6 +1,6 @@
 package bench
 
-var tpchSQL := map[string]string {
+var tpchSQL = map[string]string {
 	"q1":`select
 	l_returnflag,
 	l_linestatus,
