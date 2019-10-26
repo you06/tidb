@@ -1092,7 +1092,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		switch rand.Int31n(3) {
 		case 1:
 			sql,_,_ := ultimate.GenCreateTable("ultimate",1)
-
+			logutil.Logger(ctx).Warn("create table",
+			nil,
+			zap.String("SQL", sql))
 			return s.execute(ctx, sql)
 		}
 		return nil, nil
