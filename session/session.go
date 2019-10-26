@@ -1116,10 +1116,13 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	if sql == "ultimate update" {
 		sql = "use ultimate"
+		uuid = "x"
 		s.execute(ctx, sql)
 		var i int32 = 0
 		successCnt := 0
-		for ; i <= 10000; i++ {
+		errNum := 0
+		totalRun := 10000
+		for ; i <= totalRun; i++ {
 			sql = ultimate.GenUpdateSQL()
 			_, err := s.execute(ctx, sql)
 			if err != nil {
