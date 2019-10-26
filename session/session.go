@@ -1088,50 +1088,51 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		return s.execute(ctx, sql)
 	}
 
-	if sql == "ultimate" {
-		switch rand.Int31n(1) {
-		case 0:
-			fmt.Print("1")
-			uuid := "x"
-			sql = "use ultimate"
-			s.execute(ctx, sql)
-			totalRun := rand.Int31n(10000)
-			errNum := 0
-			successCnt := 0
-			var i int32 = 0
-			for ; i<= totalRun; i++ {
-				fmt.Print("2\n")
-				tableCol := rand.Intn(1000) + 1
-				sql,_ ,_ := ultimate.GenCreateTable(tableCol)
+	if sql == "ultimate wide_table" {
+		uuid := "x"
+		sql = "use ultimate"
+		s.execute(ctx, sql)
+		totalRun := rand.Int31n(10000)
+		errNum := 0
+		successCnt := 0
+		var i int32 = 0
+		for ; i<= totalRun; i++ {
+			tableCol := rand.Intn(1000) + 1
+			sql,_ ,_ := ultimate.GenCreateTable(tableCol)
+			_, err := s.execute(ctx, sql)
+			if err != nil {
 				fmt.Printf("sql:%s\n", sql)
-				_, err := s.execute(ctx, sql)
-				if err != nil {
-					fmt.Printf("error %+v\n",err)
-					errNum++
-					continue
-				}
-				// fmt.Print("3\n")
-				// sql = ultimate.GenInsertTable(tableName, columnsType)
-				// fmt.Printf("sql:%s\n", sql)
-				// _, err = s.execute(ctx, sql)
-				// if err != nil {
-				// 	errNum++
-				// 	fmt.Printf("error %+v\n",err)
-				// 	continue
-				// }
-				// fmt.Print("4\n")
-				successCnt++
-				sql = fmt.Sprintf("UPDATE  wide_table set total_count='%d', error='%d', success='%d'  where id='%s';",totalRun,errNum,successCnt,uuid)
-				fmt.Println(sql)
-				s.execute(ctx, sql)
-				fmt.Print("5\n")
+				fmt.Printf("error %+v\n",err)
+				errNum++
+				continue
 			}
-			fmt.Print("6\n")
-			sql = fmt.Sprintf("select * from ultimate.wide_table where id = '%s'",uuid)
-			fmt.Println(sql)
-			return s.execute(ctx, sql)
+			successCnt++
+			sql = fmt.Sprintf("UPDATE  wide_table set total_count='%d', error='%d', success='%d'  where id='%s';",totalRun,errNum,successCnt,uuid)
+			s.execute(ctx, sql)
 		}
-		return nil, nil
+		sql = fmt.Sprintf("select * from ultimate.wide_table where id = '%s'",uuid)
+		return s.execute(ctx, sql)
+	}
+
+	if sql == "ultimate update" {
+		sql = "use ultimate"
+		s.execute(ctx, sql)
+		var i int32 = 0
+		successCnt := 0
+		for ; i <= 10000; i++ {
+			sql = ultimate.GenUpdateSQL()
+			_, err := s.execute(ctx, sql)
+			if err != nil {
+				fmt.Printf("error %+v\n",err)
+				errNum++
+				continue
+			}
+			successCnt++
+			sql = fmt.Sprintf("UPDATE  ultimate.update_data set total_count='%d', error='%d', success='%d'  where id='%s';",totalRun,errNum,successCnt,uuid)
+			s.execute(ctx, sql)
+		}
+		sql = fmt.Sprintf("select * from ultimate.update where id = '%s'",uuid)
+		return s.execute(ctx, sql)
 	}
 
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
