@@ -1072,7 +1072,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		sql = bench.GenBenchSql()
 		cur := time.Now()
 		rs, _ := s.execute(ctx, sql)
-		for r := range rs {
+		for _, r := range rs {
 			GetRows4Test(ctx,nil, r)
 		}
 
