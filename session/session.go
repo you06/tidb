@@ -1072,6 +1072,40 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		return nil, err
 	}
 
+	if sql == "init" {
+		sql = "create database benchmark"
+		s.execute(ctx, sql)
+		sql = "use benchmark"
+		s.execute(ctx, sql)
+		sql = "CREATE TABLE `tpch` ( `query` varchar(255) DEFAULT NULL, `spendtime` varchar(255) DEFAULT NULL,`time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+		s.execute(ctx, sql)
+
+		sql = "create database ultimate;"
+		s.execute(ctx, sql)
+		sql = "use ultimate;"
+		s.execute(ctx, sql)
+		sql = "CREATE TABLE `wide_table` (`id` varchar(255) DEFAULT NULL,`total_count` bigint(20) DEFAULT NULL,`error` bigint(20) DEFAULT NULL,`success` bigint(20) DEFAULT NULL,`time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
+		s.execute(ctx, sql)
+		
+		sql = "INSERT INTO `wide_table` (id) values('x');"
+		s.execute(ctx, sql)
+		
+		sql = "CREATE TABLE `update_data` (`id` varchar(255) DEFAULT NULL,`total_count` bigint(20) DEFAULT NULL,`error` bigint(20) DEFAULT NULL,`success` bigint(20) DEFAULT NULL,`time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
+		s.execute(ctx, sql)
+		
+		sql = "INSERT INTO `update_data` (id) values('x');"
+		s.execute(ctx, sql)
+		sql = "use test;"
+		s.execute(ctx, sql)
+		
+		sql = "CREATE TABLE   `data` (`update_data` varchar(255),`id` varchar(255));"
+		s.execute(ctx, sql)
+		
+		sql = "INSERT INTO `data` (id) values('update');"
+		s.execute(ctx, sql)
+		return nil, nil
+	}
+
 	// fmt.Println("1")
 	if sql == "bench" {
 		// fmt.Println("1.1")
@@ -1158,6 +1192,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			fmt.Println(err)
 			return nil, err
 		}
+		logutil.BgLogger().Error("sqlsmith point 3", zap.Error(err))
 		tables, _, err := s.ExecRestrictedSQL("SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE FROM information_schema.tables")
 		if err != nil {
 			fmt.Println(err)
@@ -1172,7 +1207,10 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			if dbName == "mysql" || dbName == "PERFORMANCE_SCHEMA" || dbName == "INFORMATION_SCHEMA" {
 				continue;
 			}
-			cols, _, err := s.ExecRestrictedSQL(fmt.Sprintf("DESC %s.%s", dbName, tableName))
+			schemaSQL := fmt.Sprintf("DESC %s.%s", dbName, tableName)
+			fmt.Println(schemaSQL)
+			logutil.BgLogger().Error(fmt.Sprintf("sqlsmith point 3 %s", schemaSQL), zap.Error(err))
+			cols, _, err := s.ExecRestrictedSQL(schemaSQL)
 			if err != nil {
 				fmt.Println(err)
 				return nil, err
@@ -1192,6 +1230,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		currentDB := s.sessionVars.CurrentDB
 
 		sqlCh := make(chan *sqlsmith.SmithSQL)
+		logutil.BgLogger().Error("sqlsmith point 4", zap.Error(err))
 		go sqlsmith.New(sql, currentDB, columns, sqlCh)
 		// fmt.Sprintf("select lower(\"%s\") as sqlsmith", )
 		loop_sql_channel:
@@ -1199,12 +1238,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				switch sqlLine.GetType() {
 				case sqlsmith.SmithSQLTypeNotice: {
 					sql = fmt.Sprintf("select lower(\"%s\") as sqlsmith", sqlLine.GetSQL())
-					fmt.Println("SQL notice received", sql)
 					break loop_sql_channel
 				}
 				case sqlsmith.SmithSQLTypeSmithSQL: {
 					smithSQL := sqlLine.GetSQL()
 					uuid := sqlLine.GetUUID()
+					success := true
 					if uuid == "" {
 						return nil, errors.New("uuid should not be an empty string")
 					}
@@ -1212,17 +1251,28 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 					if err != nil {
 						return nil, err
 					}
+
 					start := time.Now()
-					_, _, err = s.ExecRestrictedSQL(smithSQL)
-					duration := int(time.Now().Sub(start).Seconds())
+					records, err := s.execute(context.Background(), smithSQL)
 					if err != nil {
-						failSQL := fmt.Sprintf(sqlsmith.FailSQL, duration, uuid)
-						fmt.Println(failSQL, err)
-						s.ExecRestrictedSQL(failSQL)
+						success = false
 					} else {
-						successSQL := fmt.Sprintf(sqlsmith.SuccessSQL, duration, uuid)
-						fmt.Println(successSQL)
+						for _, r := range records {
+							if _, err := GetRows4Test(ctx,nil, r); err != nil {
+								success = false
+								fmt.Println(err)
+								break
+							}
+						}
+					}
+					duration := int(time.Now().Sub(start).Seconds())
+					failSQL := fmt.Sprintf(sqlsmith.FailSQL, duration, uuid)
+					successSQL := fmt.Sprintf(sqlsmith.SuccessSQL, duration, uuid)
+
+					if success {
 						s.ExecRestrictedSQL(successSQL)
+					} else {
+						s.ExecRestrictedSQL(failSQL)
 					}
 				}
 				case sqlsmith.SmithSQLTypeExec: {

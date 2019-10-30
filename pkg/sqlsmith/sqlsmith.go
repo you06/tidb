@@ -1,26 +1,96 @@
 package sqlsmith
 
 import (
-	"log"
+	"fmt"
+	"strconv"
+	"strings"
 	sqlsmith_go "github.com/you06/sqlsmith-go"
 )
 
 // New create sqlsmith
-func New(sql, db string, records [][5]string) string {
-	if db == "" {
-		return "select a database and try again"
+func New(sql, db string, records [][5]string, sqlCh chan *SmithSQL) {
+	commands := strings.Split(sql, " ")
+	if len(commands) == 1 {
+		New(fmt.Sprintf("%s exec 1", sql), db, records, sqlCh)
+		return
 	}
-
+	defer close(sqlCh)
+	if db == "" {
+		sqlCh <- &SmithSQL{
+			SQL: "select a database and try again",
+			Type: SmithSQLTypeNotice,
+		}
+		return
+	}
+	sqlCh <- &SmithSQL{
+		SQL: fmt.Sprintf("use %s", db),
+		Type: SmithSQLTypeMustExec,
+	}
+	
 	ss := sqlsmith_go.New()
 	ss.LoadSchema(records)
 	ss.SetDB(db)
 
-	node := ss.SelectStmt(10)
-	sql, err :=	ss.Walk(node)
-
-	if err != nil {
-		log.Println(err)
+	switch commands[1] {
+	case "insert":
+		if len(commands) == 2 {
+			insertData(ss, 10, sqlCh)
+		}
+		count, err := strconv.Atoi(commands[2])
+		if err != nil {
+			sqlCh <- &SmithSQL{
+				SQL: "2nd arg must be an int",
+				Type: SmithSQLTypeNotice,
+			}
+			return
+		}
+		insertData(ss, count, sqlCh)
+	case "exec":
+		if len(commands) == 2 {
+			exec(ss, 1, 1, sqlCh)
+			return
+		}
+		depth, err := strconv.Atoi(commands[2])
+		if err != nil {
+			sqlCh <- &SmithSQL{
+				SQL: "2nd arg must be an int",
+				Type: SmithSQLTypeNotice,
+			}
+			return
+		}
+		if len(commands) == 3 {
+			exec(ss, depth, 1, sqlCh)
+			return
+		}
+		count, err := strconv.Atoi(commands[3])
+		if err != nil {
+			sqlCh <- &SmithSQL{
+				SQL: "3rd arg must be an int",
+				Type: SmithSQLTypeNotice,
+			}
+			return
+		}
+		exec(ss, depth, count, sqlCh)
+	case "log":
+		logSQL := "select * from test.sqlsmith order by created_at asc limit %d"
+		if len(commands) == 2 {
+			sqlCh <- &SmithSQL{
+				SQL: fmt.Sprintf(logSQL, 5),
+				Type: SmithSQLTypeExec,
+			}
+			return
+		}
+		limit, err := strconv.Atoi(commands[2])
+		if err != nil {
+			sqlCh <- &SmithSQL{
+				SQL: "2nd arg must be an int",
+				Type: SmithSQLTypeNotice,
+			}
+			return
+		}
+		sqlCh <- &SmithSQL{
+			SQL: fmt.Sprintf(logSQL, limit),
+			Type: SmithSQLTypeExec,
+		}
 	}
-
-	return sql
 }
