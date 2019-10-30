@@ -1072,9 +1072,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		return nil, err
 	}
 
-	fmt.Println("1")
+	// fmt.Println("1")
 	if sql == "bench" {
-		fmt.Println("1.1")
+		// fmt.Println("1.1")
 		sql = bench.GenBenchSql()
 		cur := time.Now()
 		rs, _ := s.execute(ctx, sql)
@@ -1090,9 +1090,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		sql = "select * from benchmark.tpch"
 		return s.execute(ctx, sql)
 	}
-	fmt.Println("2")
+	// fmt.Println("2")
 	if sql == "tidb_test wide_table" {
-		fmt.Println("2.1")
+		// fmt.Println("2.1")
 		uuid := "x"
 		totalRun := rand.Int31n(10000)
 		errNum := 0
@@ -1121,7 +1121,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		return s.execute(ctx, sql)
 	}
 
-	fmt.Println("3")
+	// fmt.Println("3")
 
 	if sql == "tidb_test update" {
 		fmt.Println("3.1")
@@ -1149,9 +1149,15 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		sql = fmt.Sprintf("select * from ultimate.update_data where id = '%s'",uuid)
 		return s.execute(ctx, sql)
 	}
-	fmt.Println("4")
+	// fmt.Println("4")
 
 	if strings.HasPrefix(sql, "sqlsmith") {
+		time.Sleep(2 * time.Second)
+		_, _, err := s.ExecRestrictedSQL(sqlsmith.SmithTable)
+		if err != nil {
+			fmt.Println(err)
+			return nil, err
+		}
 		tables, _, err := s.ExecRestrictedSQL("SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE FROM information_schema.tables")
 		if err != nil {
 			fmt.Println(err)
@@ -1184,7 +1190,67 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		// cols, _, err := s.ExecRestrictedSQL("SELECT DATABASE()")
 		// fmt.Println(cols, cols[0], len(cols), cols[0].Len(), err)
 		currentDB := s.sessionVars.CurrentDB
-		sql = fmt.Sprintf("select lower(\"%s\") as sqlsmith", sqlsmith.New(sql, currentDB, columns))
+
+		sqlCh := make(chan *sqlsmith.SmithSQL)
+		go sqlsmith.New(sql, currentDB, columns, sqlCh)
+		// fmt.Sprintf("select lower(\"%s\") as sqlsmith", )
+		loop_sql_channel:
+			for sqlLine := range sqlCh {
+				switch sqlLine.GetType() {
+				case sqlsmith.SmithSQLTypeNotice: {
+					sql = fmt.Sprintf("select lower(\"%s\") as sqlsmith", sqlLine.GetSQL())
+					fmt.Println("SQL notice received", sql)
+					break loop_sql_channel
+				}
+				case sqlsmith.SmithSQLTypeSmithSQL: {
+					smithSQL := sqlLine.GetSQL()
+					uuid := sqlLine.GetUUID()
+					if uuid == "" {
+						return nil, errors.New("uuid should not be an empty string")
+					}
+					_, _, err := s.ExecRestrictedSQL(fmt.Sprintf(sqlsmith.ProcessSQL, uuid, smithSQL, currentDB))
+					if err != nil {
+						return nil, err
+					}
+					start := time.Now()
+					_, _, err = s.ExecRestrictedSQL(smithSQL)
+					duration := int(time.Now().Sub(start).Seconds())
+					if err != nil {
+						failSQL := fmt.Sprintf(sqlsmith.FailSQL, duration, uuid)
+						fmt.Println(failSQL, err)
+						s.ExecRestrictedSQL(failSQL)
+					} else {
+						successSQL := fmt.Sprintf(sqlsmith.SuccessSQL, duration, uuid)
+						fmt.Println(successSQL)
+						s.ExecRestrictedSQL(successSQL)
+					}
+				}
+				case sqlsmith.SmithSQLTypeExec: {
+					sql = sqlLine.GetSQL()
+					break loop_sql_channel
+				}
+				case sqlsmith.SmithSQLTypeMustExec: {
+					s.ExecRestrictedSQL(sqlLine.GetSQL())
+				}
+				}
+				// _, _, err := s.ExecRestrictedSQL(sqlLine)
+				// if err != nil {
+				// 	sql =	fmt.Sprintf("select lower(\"%v\") as error", err)
+				// 	break
+				// }
+			}
+		
+		// if sql != "" {
+		// 	sql = fmt.Sprintf("select lower(\"%s\") as sqlsmith", sql)
+		// }
+
+		// sql = sqlsmith.New(sql, currentDB, columns)
+		// _, _, err = s.ExecRestrictedSQL(sql)
+		// if err != nil {
+		// 	errStr := fmt.Sprintf("%v", err)
+		// 	sql = fmt.Sprintf("select lower(\"%s\") as sqlsmith lower(\"%s\")",
+		// 		sqlsmith.New(sql, currentDB, columns), errStr)
+		// }
 
 		// rs := res[0]
 		// req := rs.NewChunk()
