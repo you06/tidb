@@ -1077,36 +1077,20 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		s.execute(ctx, sql)
 		sql = "use benchmark"
 		s.execute(ctx, sql)
-		sql = "CREATE TABLE `tpch` (
-  				`query` varchar(255) DEFAULT NULL,
-  				`spendtime` varchar(255) DEFAULT NULL,
-  				`time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
-				) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+		sql = "CREATE TABLE `tpch` ( `query` varchar(255) DEFAULT NULL, `spendtime` varchar(255) DEFAULT NULL,`time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 		s.execute(ctx, sql)
 
 		sql = "create database ultimate;"
 		s.execute(ctx, sql)
 		sql = "use ultimate;"
 		s.execute(ctx, sql)
-		sql = "CREATE TABLE `wide_table` (
-		  `id` varchar(255) DEFAULT NULL,
-		  `total_count` bigint(20) DEFAULT NULL,
-		  `error` bigint(20) DEFAULT NULL,
-		  `success` bigint(20) DEFAULT NULL,
-		  `time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
+		sql = "CREATE TABLE `wide_table` (`id` varchar(255) DEFAULT NULL,`total_count` bigint(20) DEFAULT NULL,`error` bigint(20) DEFAULT NULL,`success` bigint(20) DEFAULT NULL,`time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 		s.execute(ctx, sql)
 		
 		sql = "INSERT INTO `wide_table` (id) values('x');"
 		s.execute(ctx, sql)
 		
-		sql = "CREATE TABLE `update_data` (
-		  `id` varchar(255) DEFAULT NULL,
-		  `total_count` bigint(20) DEFAULT NULL,
-		  `error` bigint(20) DEFAULT NULL,
-		  `success` bigint(20) DEFAULT NULL,
-		  `time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
+		sql = "CREATE TABLE `update_data` (`id` varchar(255) DEFAULT NULL,`total_count` bigint(20) DEFAULT NULL,`error` bigint(20) DEFAULT NULL,`success` bigint(20) DEFAULT NULL,`time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 		s.execute(ctx, sql)
 		
 		sql = "INSERT INTO `update_data` (id) values('x');"
@@ -1114,10 +1098,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		sql = "use test;"
 		s.execute(ctx, sql)
 		
-		sql = "CREATE TABLE   `data` (
-			`update_data` varchar(255),
-			`id` varchar(255)
-		);"
+		sql = "CREATE TABLE   `data` (`update_data` varchar(255),`id` varchar(255));"
 		s.execute(ctx, sql)
 		
 		sql = "INSERT INTO `data` (id) values('update');"
