@@ -1192,7 +1192,6 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			fmt.Println(err)
 			return nil, err
 		}
-		logutil.BgLogger().Error("sqlsmith point 3", zap.Error(err))
 		tables, _, err := s.ExecRestrictedSQL("SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE FROM information_schema.tables")
 		if err != nil {
 			fmt.Println(err)
@@ -1208,8 +1207,6 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				continue;
 			}
 			schemaSQL := fmt.Sprintf("DESC %s.%s", dbName, tableName)
-			fmt.Println(schemaSQL)
-			logutil.BgLogger().Error(fmt.Sprintf("sqlsmith point 3 %s", schemaSQL), zap.Error(err))
 			cols, _, err := s.ExecRestrictedSQL(schemaSQL)
 			if err != nil {
 				fmt.Println(err)
@@ -1225,12 +1222,22 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 				})
 			}
 		}
-		// cols, _, err := s.ExecRestrictedSQL("SELECT DATABASE()")
-		// fmt.Println(cols, cols[0], len(cols), cols[0].Len(), err)
+		records, err := s.Execute(context.Background(), "SET @@SESSION.SQL_MODE=\"NO_ENGINE_SUBSTITUTION\"")
+		if err != nil {
+			fmt.Println(err)
+			return nil, err
+		}
+		for _, r := range records {
+			fmt.Println(err)
+			if _, err := GetRows4Test(ctx,nil, r); err != nil {
+				return nil, err
+			}
+		}
+
+		// set SQL mode same with MySQL
 		currentDB := s.sessionVars.CurrentDB
 
-		sqlCh := make(chan *sqlsmith.SmithSQL)
-		logutil.BgLogger().Error("sqlsmith point 4", zap.Error(err))
+		sqlCh := make(chan *sqlsmith.SmithSQL, 10)
 		go sqlsmith.New(sql, currentDB, columns, sqlCh)
 		// fmt.Sprintf("select lower(\"%s\") as sqlsmith", )
 		loop_sql_channel:
@@ -1244,6 +1251,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 					smithSQL := sqlLine.GetSQL()
 					uuid := sqlLine.GetUUID()
 					success := true
+
 					if uuid == "" {
 						return nil, errors.New("uuid should not be an empty string")
 					}
@@ -1253,12 +1261,12 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 					}
 
 					start := time.Now()
-					records, err := s.execute(context.Background(), smithSQL)
+					records, err := s.Execute(context.Background(), smithSQL)
 					if err != nil {
 						success = false
 					} else {
 						for _, r := range records {
-							if _, err := GetRows4Test(ctx,nil, r); err != nil {
+							if err := getRowsFree(ctx,nil, r); err != nil {
 								success = false
 								fmt.Println(err)
 								break
@@ -1274,6 +1282,23 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 					} else {
 						s.ExecRestrictedSQL(failSQL)
 					}
+				}
+				case sqlsmith.SmithSQLTypeInsert: {
+					// start := time.Now()
+					records, err := s.Execute(context.Background(), sqlLine.GetSQL())
+					if err != nil {
+						fmt.Println(sqlLine.GetSQL())
+						return nil, err
+					}
+					fmt.Println("sleep start")
+					time.Sleep(time.Minute)
+					fmt.Println("sleep end")
+					for _, r := range records {
+						if _, err := GetRows4Test(ctx,nil, r); err != nil {
+							return nil, err
+						}
+					}
+					// duration := int(time.Now().Sub(start).Seconds())
 				}
 				case sqlsmith.SmithSQLTypeExec: {
 					sql = sqlLine.GetSQL()

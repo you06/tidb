@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	sqlsmith_go "github.com/you06/sqlsmith-go"
 )
 
@@ -26,15 +27,16 @@ func New(sql, db string, records [][5]string, sqlCh chan *SmithSQL) {
 		SQL: fmt.Sprintf("use %s", db),
 		Type: SmithSQLTypeMustExec,
 	}
-	
+	start := time.Now()
 	ss := sqlsmith_go.New()
 	ss.LoadSchema(records)
 	ss.SetDB(db)
 
 	switch commands[1] {
-	case "insert":
+	case "insert": {
 		if len(commands) == 2 {
-			insertData(ss, 10, sqlCh)
+			insertData(ss, 10, 10, sqlCh)
+			return
 		}
 		count, err := strconv.Atoi(commands[2])
 		if err != nil {
@@ -44,8 +46,21 @@ func New(sql, db string, records [][5]string, sqlCh chan *SmithSQL) {
 			}
 			return
 		}
-		insertData(ss, count, sqlCh)
-	case "exec":
+		if len(commands) == 3 {
+			insertData(ss, count, 10, sqlCh)
+			return
+		}
+		depth, err := strconv.Atoi(commands[2])
+		if err != nil {
+			sqlCh <- &SmithSQL{
+				SQL: "3rd arg must be an int",
+				Type: SmithSQLTypeNotice,
+			}
+			return
+		}
+		insertData(ss, count, depth, sqlCh)
+	}
+	case "exec": {
 		if len(commands) == 2 {
 			exec(ss, 1, 1, sqlCh)
 			return
@@ -71,7 +86,8 @@ func New(sql, db string, records [][5]string, sqlCh chan *SmithSQL) {
 			return
 		}
 		exec(ss, depth, count, sqlCh)
-	case "log":
+	}
+	case "log": {
 		logSQL := "select * from test.sqlsmith order by created_at asc limit %d"
 		if len(commands) == 2 {
 			sqlCh <- &SmithSQL{
@@ -92,5 +108,12 @@ func New(sql, db string, records [][5]string, sqlCh chan *SmithSQL) {
 			SQL: fmt.Sprintf(logSQL, limit),
 			Type: SmithSQLTypeExec,
 		}
+	}
+	}
+
+	duration := int(time.Now().Sub(start).Seconds())
+	sqlCh <- &SmithSQL{
+		SQL: fmt.Sprintf("exec success in %d seconds.", duration),
+		Type: SmithSQLTypeNotice,
 	}
 }
