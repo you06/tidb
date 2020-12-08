@@ -625,7 +625,7 @@ var defaultConf = Config{
 		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
 		DistinctAggPushDown:   false,
 		CommitterConcurrency:  16,
-		MaxTxnTTL:             10 * 60 * 1000, // 10min
+		MaxTxnTTL:             10 * 1000, // 10s
 		GOGC:                  100,
 	},
 	ProxyProtocol: ProxyProtocol{

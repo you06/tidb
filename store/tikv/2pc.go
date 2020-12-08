@@ -1429,6 +1429,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 
 	start = time.Now()
+
+	// slow commit
+	time.Sleep(20 * time.Second)
+
 	commitBo := NewBackofferWithVars(ctx, CommitMaxBackoff, c.txn.vars)
 	err = c.commitMutations(commitBo, c.mutations)
 	commitDetail.CommitTime = time.Since(start)
