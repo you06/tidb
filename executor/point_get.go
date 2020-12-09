@@ -15,6 +15,10 @@ package executor
 
 import (
 	"context"
+	"fmt"
+
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -332,6 +336,11 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		// different for pessimistic transaction.
 		val, err = e.txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
+			if e.ctx.GetSessionVars().ConnectionID > 0 {
+				logutil.Logger(ctx).Info("MYLOG point get mem buffer",
+					zap.Stringer("key", key),
+					zap.String("value", fmt.Sprintln(val)))
+			}
 			return val, err
 		}
 		if !kv.IsErrNotFound(err) {
@@ -342,6 +351,11 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 			var ok bool
 			val, ok = e.ctx.GetSessionVars().TxnCtx.GetKeyInPessimisticLockCache(key)
 			if ok {
+				if e.ctx.GetSessionVars().ConnectionID > 0 {
+					logutil.Logger(ctx).Info("MYLOG point get lock cache",
+						zap.Stringer("key", key),
+						zap.String("value", fmt.Sprintln(val)))
+				}
 				return val, nil
 			}
 		}
@@ -364,10 +378,24 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 				return nil, err
 			}
 		}
+
+		if e.ctx.GetSessionVars().ConnectionID > 0 {
+			logutil.Logger(ctx).Info("MYLOG point get cache db",
+				zap.Stringer("key", key),
+				zap.String("value", fmt.Sprintln(val)))
+		}
 		return val, nil
 	}
 	// if not read lock or table was unlock then snapshot get
-	return e.snapshot.Get(ctx, key)
+	val, err = e.snapshot.Get(ctx, key)
+	if err == nil {
+		if e.ctx.GetSessionVars().ConnectionID > 0 {
+			logutil.Logger(ctx).Info("MYLOG point get snapshot",
+				zap.Stringer("key", key),
+				zap.String("value", fmt.Sprintln(val)))
+		}
+	}
+	return val, err
 }
 
 // EncodeUniqueIndexKey encodes a unique index key.
