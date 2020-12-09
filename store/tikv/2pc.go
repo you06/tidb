@@ -1284,6 +1284,10 @@ func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *execdet
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
 	}
+	if c.connID > 0 {
+		logutil.Logger(ctx).Info("MYLOG commit",
+			zap.Uint64("commitTS", c.commitTS))
+	}
 	return nil
 }
 
