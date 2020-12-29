@@ -516,6 +516,8 @@ const (
 
 	// TiDBTrackAggregateMemoryUsage indicates whether track the memory usage of aggregate function.
 	TiDBTrackAggregateMemoryUsage = "tidb_track_aggregate_memory_usage"
+
+	TiDBEnableDeterministic = "tidb_enable_deterministic"
 )
 
 // Default TiDB system variable values.
@@ -640,6 +642,7 @@ const (
 	DefTiDBAnalyzeVersion               = 1
 	DefTiDBEnableIndexMergeJoin         = false
 	DefTiDBTrackAggregateMemoryUsage    = false
+	DefTiDBEnableDeterministic          = false
 )
 
 // Process global variables.
