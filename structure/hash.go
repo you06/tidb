@@ -254,6 +254,11 @@ func (t *TxStructure) HClear(key []byte) error {
 	return errors.Trace(t.readWriter.Delete(metaKey))
 }
 
+// IterateHash expose iterateHash
+func (t *TxStructure) IterateHash(key []byte, fn func(k []byte, v []byte) error) error {
+	return t.iterateHash(key, fn)
+}
+
 func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error) error {
 	dataPrefix := t.hashDataKeyPrefix(key)
 	it, err := t.reader.Iter(dataPrefix, dataPrefix.PrefixNext())

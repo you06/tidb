@@ -120,6 +120,11 @@ func (m *Meta) GenGlobalID() (int64, error) {
 	return m.txn.Inc(mNextGlobalIDKey, 1)
 }
 
+// GetTxn returns private txn.
+func (m *Meta) GetTxn() *structure.TxStructure {
+	return m.txn
+}
+
 // GenGlobalIDs generates the next n global IDs.
 func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 	globalIDMutex.Lock()
