@@ -381,8 +381,8 @@ func (s *testAsyncCommitSuite) TestAsyncCommitExternalConsistency(c *C) {
 	c.Assert(err, IsNil)
 	err = t1.Commit(ctx)
 	c.Assert(err, IsNil)
-	commitTS1 := t1.committer.commitTS
-	commitTS2 := t2.committer.commitTS
+	commitTS1 := t1.committer.(*twoPhaseCommitter).commitTS
+	commitTS2 := t2.committer.(*twoPhaseCommitter).commitTS
 	c.Assert(commitTS2, Less, commitTS1)
 }
 

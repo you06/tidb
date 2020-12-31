@@ -53,11 +53,12 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(txn.committer.isOnePC(), IsTrue)
-	c.Assert(txn.committer.onePCCommitTS, Equals, txn.committer.commitTS)
-	c.Assert(txn.committer.onePCCommitTS, Greater, txn.startTS)
+	committer := txn.committer.(*twoPhaseCommitter)
+	c.Assert(committer.isOnePC(), IsTrue)
+	c.Assert(committer.onePCCommitTS, Equals, committer.commitTS)
+	c.Assert(committer.onePCCommitTS, Greater, txn.startTS)
 	// ttlManager is not used for 1PC.
-	c.Assert(txn.committer.ttlManager.state, Equals, stateUninitialized)
+	c.Assert(committer.ttlManager.state, Equals, stateUninitialized)
 
 	// 1PC doesn't work if connID == 0
 	k2 := []byte("k2")
@@ -68,9 +69,10 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	c.Assert(txn.committer.isOnePC(), IsFalse)
-	c.Assert(txn.committer.onePCCommitTS, Equals, uint64(0))
-	c.Assert(txn.committer.commitTS, Greater, txn.startTS)
+	committer = txn.committer.(*twoPhaseCommitter)
+	c.Assert(committer.isOnePC(), IsFalse)
+	c.Assert(committer.onePCCommitTS, Equals, uint64(0))
+	c.Assert(committer.commitTS, Greater, txn.startTS)
 
 	// 1PC doesn't work if system variable not set
 
@@ -82,9 +84,10 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(txn.committer.isOnePC(), IsFalse)
-	c.Assert(txn.committer.onePCCommitTS, Equals, uint64(0))
-	c.Assert(txn.committer.commitTS, Greater, txn.startTS)
+	committer = txn.committer.(*twoPhaseCommitter)
+	c.Assert(committer.isOnePC(), IsFalse)
+	c.Assert(committer.onePCCommitTS, Equals, uint64(0))
+	c.Assert(committer.commitTS, Greater, txn.startTS)
 
 	// Test multiple keys
 	k4 := []byte("k4")
@@ -103,9 +106,10 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(txn.committer.isOnePC(), IsTrue)
-	c.Assert(txn.committer.onePCCommitTS, Equals, txn.committer.commitTS)
-	c.Assert(txn.committer.onePCCommitTS, Greater, txn.startTS)
+	committer = txn.committer.(*twoPhaseCommitter)
+	c.Assert(committer.isOnePC(), IsTrue)
+	c.Assert(committer.onePCCommitTS, Equals, committer.commitTS)
+	c.Assert(committer.onePCCommitTS, Greater, txn.startTS)
 	// Check keys are committed with the same version
 	s.mustGetFromSnapshot(c, txn.commitTS, k4, v4)
 	s.mustGetFromSnapshot(c, txn.commitTS, k5, v5)
@@ -121,9 +125,10 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(txn.committer.isOnePC(), IsTrue)
-	c.Assert(txn.committer.onePCCommitTS, Equals, txn.committer.commitTS)
-	c.Assert(txn.committer.onePCCommitTS, Greater, txn.startTS)
+	committer = txn.committer.(*twoPhaseCommitter)
+	c.Assert(committer.isOnePC(), IsTrue)
+	c.Assert(committer.onePCCommitTS, Equals, committer.commitTS)
+	c.Assert(committer.onePCCommitTS, Greater, txn.startTS)
 	s.mustGetFromSnapshot(c, txn.commitTS, k6, v6New)
 	s.mustGetFromSnapshot(c, txn.commitTS-1, k6, v6)
 
@@ -166,7 +171,8 @@ func (s *testOnePCSuite) Test1PCIsolation(c *C) {
 	s.mustGetFromTxn(c, txn2, k, v1)
 
 	err = txn.Commit(ctx)
-	c.Assert(txn.committer.isOnePC(), IsTrue)
+	committer := txn.committer.(*twoPhaseCommitter)
+	c.Assert(committer.isOnePC(), IsTrue)
 	c.Assert(err, IsNil)
 
 	s.mustGetFromTxn(c, txn2, k, v1)
@@ -210,9 +216,10 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(txn.committer.isOnePC(), IsFalse)
-	c.Assert(txn.committer.onePCCommitTS, Equals, uint64(0))
-	c.Assert(txn.committer.commitTS, Greater, txn.startTS)
+	committer := txn.committer.(*twoPhaseCommitter)
+	c.Assert(committer.isOnePC(), IsFalse)
+	c.Assert(committer.onePCCommitTS, Equals, uint64(0))
+	c.Assert(committer.commitTS, Greater, txn.startTS)
 
 	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
@@ -241,8 +248,8 @@ func (s *testOnePCSuite) Test1PCExternalConsistency(c *C) {
 	c.Assert(err, IsNil)
 	err = t1.Commit(ctx)
 	c.Assert(err, IsNil)
-	commitTS1 := t1.(*tikvTxn).committer.commitTS
-	commitTS2 := t2.(*tikvTxn).committer.commitTS
+	commitTS1 := t1.(*tikvTxn).committer.(*twoPhaseCommitter).commitTS
+	commitTS2 := t2.(*tikvTxn).committer.(*twoPhaseCommitter).commitTS
 	c.Assert(commitTS2, Less, commitTS1)
 }
 

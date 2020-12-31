@@ -177,7 +177,7 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 		err = txn.Commit(ctx)
 		c.Assert(err, IsNil)
 
-		primary := txn.committer.primary()
+		primary := txn.committer.(*twoPhaseCommitter).primary()
 		bo := NewBackofferWithVars(context.Background(), 5000, nil)
 		txnStatus, err := s.store.lockResolver.getTxnStatus(bo, txn.StartTS(), primary, 0, 0, false, false, nil)
 		c.Assert(err, IsNil)
@@ -204,7 +204,7 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
 		txn.committer.cleanup(context.Background())
-		txn.committer.cleanWg.Wait()
+		txn.committer.GetCleanWg().Wait()
 	}
 
 	test([]string{"a"}, []string{"a1"})
@@ -229,5 +229,5 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitContextCancelCausingUndetermin
 	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
 	err = txn.Commit(ctx)
 	c.Assert(err, NotNil)
-	c.Assert(txn.committer.mu.undeterminedErr, NotNil)
+	c.Assert(txn.committer.(*twoPhaseCommitter).mu.undeterminedErr, NotNil)
 }

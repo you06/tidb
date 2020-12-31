@@ -158,10 +158,11 @@ type TransactionContext struct {
 	PessimisticCacheHit  int
 
 	// CreateTime For metrics.
-	CreateTime     time.Time
-	StatementCount int
-	CouldRetry     bool
-	IsPessimistic  bool
+	CreateTime      time.Time
+	StatementCount  int
+	CouldRetry      bool
+	IsPessimistic   bool
+	IsDeterministic bool
 	// IsStaleness indicates whether the txn is read only staleness txn.
 	IsStaleness bool
 	Isolation   string

@@ -2409,7 +2409,9 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
 		TxnScope:      s.GetSessionVars().CheckAndGetTxnScope(),
 	}
-	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
+	if s.sessionVars.EnableDeterministic {
+		s.sessionVars.TxnCtx.IsDeterministic = true
+	} else if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
 			s.sessionVars.TxnCtx.IsPessimistic = true
 		}

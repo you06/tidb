@@ -348,13 +348,15 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
+	isDeterministic := sctx.GetSessionVars().TxnCtx.IsDeterministic
 
 	// Special handle for "select for update statement" in pessimistic transaction.
-	if isPessimistic && a.isSelectForUpdate {
+	// FIXME: !isDeterministic condition here is redundant
+	if !isDeterministic && isPessimistic && a.isSelectForUpdate {
 		return a.handlePessimisticSelectForUpdate(ctx, e)
 	}
 
-	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled {
+	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic && !isDeterministic); handled {
 		return result, err
 	}
 

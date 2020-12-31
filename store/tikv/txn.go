@@ -66,7 +66,8 @@ type tikvTxn struct {
 	mu        sync.Mutex // For thread-safe LockKeys function.
 	setCnt    int64
 	vars      *kv.Variables
-	committer *twoPhaseCommitter
+	//committer *twoPhaseCommitter
+	committer Committer
 	lockedCnt int
 
 	// For data consistency check.
@@ -256,7 +257,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	defer func() {
 		// For async commit transactions, the ttl manager will be closed in the asynchronous commit goroutine.
 		if !committer.isAsyncCommit() {
-			committer.ttlManager.close()
+			committer.GetTtlManager().close()
 		}
 	}()
 
@@ -266,7 +267,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if committer.mutations.Len() == 0 {
+	if committer.GetMutations().Len() == 0 {
 		return nil
 	}
 
@@ -295,7 +296,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// latches enabled
 	// for transactions which need to acquire latches
 	start = time.Now()
-	lock := txn.store.txnLatches.Lock(committer.startTS, committer.mutations.GetKeys())
+	lock := txn.store.txnLatches.Lock(committer.GetStartTS(), committer.GetMutations().GetKeys())
 	commitDetail := committer.getDetail()
 	commitDetail.LocalLatchTime = time.Since(start)
 	if commitDetail.LocalLatchTime > 0 {
@@ -310,7 +311,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		txn.onCommitted(err)
 	}
 	if err == nil {
-		lock.SetCommitTS(committer.commitTS)
+		lock.SetCommitTS(committer.GetCommitTS())
 	}
 	logutil.Logger(ctx).Debug("[kv] txnLatches enabled while txn retryable", zap.Error(err))
 	return errors.Trace(err)
@@ -328,7 +329,7 @@ func (txn *tikvTxn) Rollback() error {
 	// Clean up pessimistic lock.
 	if txn.IsPessimistic() && txn.committer != nil {
 		err := txn.rollbackPessimisticLocks()
-		txn.committer.ttlManager.close()
+		txn.committer.GetTtlManager().close()
 		if err != nil {
 			logutil.BgLogger().Error(err.Error())
 		}
@@ -429,6 +430,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	}
 	keys = deduplicateKeys(keys)
 	if txn.IsPessimistic() && lockCtx.ForUpdateTS > 0 {
+		var committer *twoPhaseCommitter
 		if txn.committer == nil {
 			// connID is used for log.
 			var connID uint64
@@ -437,14 +439,17 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			if val != nil {
 				connID = val.(uint64)
 			}
-			txn.committer, err = newTwoPhaseCommitter(txn, connID)
+			committer, err = newTwoPhaseCommitter(txn, connID)
 			if err != nil {
 				return err
 			}
+			txn.committer = committer
+		} else {
+			committer = txn.committer.(*twoPhaseCommitter)
 		}
 		var assignedPrimaryKey bool
-		if txn.committer.primaryKey == nil {
-			txn.committer.primaryKey = keys[0]
+		if committer.primaryKey == nil {
+			committer.primaryKey = keys[0]
 			assignedPrimaryKey = true
 		}
 
@@ -452,11 +457,11 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			LockKeys: int32(len(keys)),
 		}
 		bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, txn.vars)
-		txn.committer.forUpdateTS = lockCtx.ForUpdateTS
+		committer.forUpdateTS = lockCtx.ForUpdateTS
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
-		txn.committer.isFirstLock = txn.lockedCnt == 0 && len(keys) == 1
-		err = txn.committer.pessimisticLockMutations(bo, lockCtx, &PlainMutations{keys: keys})
+		committer.isFirstLock = txn.lockedCnt == 0 && len(keys) == 1
+		err = committer.pessimisticLockMutations(bo, lockCtx, &PlainMutations{keys: keys})
 		if bo.totalSleep > 0 {
 			atomic.AddInt64(&lockCtx.Stats.BackoffTime, int64(bo.totalSleep)*int64(time.Millisecond))
 			lockCtx.Stats.Mu.Lock()
@@ -492,12 +497,12 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			}
 			if assignedPrimaryKey {
 				// unset the primary key if we assigned primary key when failed to lock it.
-				txn.committer.primaryKey = nil
+				committer.primaryKey = nil
 			}
 			return err
 		}
 		if assignedPrimaryKey {
-			txn.committer.ttlManager.run(txn.committer, lockCtx)
+			committer.ttlManager.run(committer, lockCtx)
 		}
 	}
 	for _, key := range keys {
@@ -532,12 +537,13 @@ func deduplicateKeys(keys [][]byte) [][]byte {
 
 func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte) *sync.WaitGroup {
 	// Clone a new committer for execute in background.
+	beforeCommitter := txn.committer.(*twoPhaseCommitter)
 	committer := &twoPhaseCommitter{
-		store:       txn.committer.store,
-		connID:      txn.committer.connID,
-		startTS:     txn.committer.startTS,
-		forUpdateTS: txn.committer.forUpdateTS,
-		primaryKey:  txn.committer.primaryKey,
+		store:       beforeCommitter.store,
+		connID:      beforeCommitter.connID,
+		startTS:     beforeCommitter.startTS,
+		forUpdateTS: beforeCommitter.forUpdateTS,
+		primaryKey:  beforeCommitter.primaryKey,
 	}
 	wg := new(sync.WaitGroup)
 	wg.Add(1)

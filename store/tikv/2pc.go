@@ -1810,3 +1810,27 @@ func (c *twoPhaseCommitter) getUndeterminedErr() error {
 	defer c.mu.RUnlock()
 	return c.mu.undeterminedErr
 }
+
+func (c *twoPhaseCommitter) GetStartTS() uint64 {
+	return c.startTS
+}
+
+func (c *twoPhaseCommitter) GetCommitTS() uint64 {
+	return c.commitTS
+}
+
+func (c *twoPhaseCommitter) GetMutations() *memBufferMutations {
+	return c.mutations
+}
+
+func (c *twoPhaseCommitter) GetTtlManager() *ttlManager {
+	return &c.ttlManager
+}
+
+func (c *twoPhaseCommitter) GetCleanWg() *sync.WaitGroup {
+	return &c.cleanWg
+}
+
+//func (c *twoPhaseCommitter) GetPrimaryKey() []byte {
+//	return c.primaryKey
+//}

@@ -779,7 +779,7 @@ func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
 		txn1Done.Done()
 	}()
 	// resume after after primary key be committed
-	<-txn1.committer.testingKnobs.acAfterCommitPrimary
+	<-txn1.committer.(*twoPhaseCommitter).testingKnobs.acAfterCommitPrimary
 
 	// start txn2 to read k3(prewrite success and primary should be committed)
 	txn2 := s.begin(c)
@@ -788,7 +788,7 @@ func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
 	v, err := txn2.Get(context.Background(), k3)
 	c.Assert(err, IsNil) // should resolve lock and read txn1 k3 result instead of rollback it.
 	c.Assert(v[0], Equals, byte(2))
-	txn1.committer.testingKnobs.bkAfterCommitPrimary <- struct{}{}
+	txn1.committer.(*twoPhaseCommitter).testingKnobs.bkAfterCommitPrimary <- struct{}{}
 	txn1Done.Wait()
 }
 
@@ -841,7 +841,7 @@ func (s *testCommitterSuite) TestDeleteAllYourWritesWithSFU(c *C) {
 		txn1Done.Done()
 	}()
 	// resume after after primary key be committed
-	<-txn1.committer.testingKnobs.acAfterCommitPrimary
+	<-txn1.committer.(*twoPhaseCommitter).testingKnobs.acAfterCommitPrimary
 	// start txn2 to read k3
 	txn2 := s.begin(c)
 	txn2.DelOption(kv.Pessimistic)
@@ -854,7 +854,7 @@ func (s *testCommitterSuite) TestDeleteAllYourWritesWithSFU(c *C) {
 	}
 	err = txn2.Commit(context.Background())
 	c.Assert(err, IsNil)
-	txn1.committer.testingKnobs.bkAfterCommitPrimary <- struct{}{}
+	txn1.committer.(*twoPhaseCommitter).testingKnobs.bkAfterCommitPrimary <- struct{}{}
 	txn1Done.Wait()
 	c.Assert(meetLocks[0].Primary[0], Equals, k2[0])
 }
@@ -944,7 +944,7 @@ func (s *testCommitterSuite) TestPkNotFound(c *C) {
 	c.Assert(err, IsNil)
 	// Stop txn ttl manager and remove primary key, like tidb server crashes and the priamry key lock does not exists actually,
 	// while the secondary lock operation succeeded.
-	txn1.committer.ttlManager.close()
+	txn1.committer.(*twoPhaseCommitter).ttlManager.close()
 
 	var status TxnStatus
 	bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, nil)
@@ -1144,9 +1144,9 @@ func (s *testCommitterSuite) TestPushPessimisticLock(c *C) {
 	err = txn1.committer.initKeysAndMutations()
 	c.Assert(err, IsNil)
 	// Strip the prewrite of the primary key.
-	txn1.committer.mutations.handles = txn1.committer.mutations.handles[1:2]
+	txn1.committer.(*twoPhaseCommitter).mutations.handles = txn1.committer.(*twoPhaseCommitter).mutations.handles[1:2]
 	c.Assert(err, IsNil)
-	err = txn1.committer.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), txn1.committer.mutations)
+	err = txn1.committer.(*twoPhaseCommitter).prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), txn1.committer.(*twoPhaseCommitter).mutations)
 	c.Assert(err, IsNil)
 	// The primary lock is a pessimistic lock and the secondary lock is a optimistic lock.
 	lock1 := s.getLockInfo(c, k1)
@@ -1197,7 +1197,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	}
 	err = txn1.committer.initKeysAndMutations()
 	c.Assert(err, IsNil)
-	err = txn1.committer.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), txn1.committer.mutations)
+	err = txn1.committer.(*twoPhaseCommitter).prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), txn1.committer.(*twoPhaseCommitter).mutations)
 	c.Assert(err, IsNil)
 	// lock the pessimistic keys
 	err = txn1.LockKeys(context.Background(), lockCtx, pessimisticLockKey)
@@ -1212,7 +1212,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 
 	// stop txn ttl manager and remove primary key, make the other keys left behind
 	bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, nil)
-	txn1.committer.ttlManager.close()
+	txn1.committer.(*twoPhaseCommitter).ttlManager.close()
 	err = txn1.committer.pessimisticRollbackMutations(bo, &PlainMutations{keys: [][]byte{pk}})
 	c.Assert(err, IsNil)
 
