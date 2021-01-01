@@ -173,6 +173,24 @@ func (st *TxnState) changePendingToValid(ctx context.Context) error {
 	return nil
 }
 
+func (st *TxnState) changeDeterministicPendingToValid(ctx context.Context, store kv.Storage, txnScope string) error {
+	var (
+		startTS uint64
+		txn     kv.Transaction
+		err     error
+	)
+	startTS, err = store.GetBatchManager().NextBatch(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	txn, err = store.BeginWithStartTS(txnScope, startTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	st.Transaction = txn
+	return nil
+}
+
 func (st *TxnState) changeToInvalid() {
 	if st.stagingHandle != kv.InvalidStagingHandle {
 		st.Transaction.GetMemBuffer().Cleanup(st.stagingHandle)

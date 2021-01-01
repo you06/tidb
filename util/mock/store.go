@@ -79,4 +79,7 @@ func (s *Store) GetMemCache() kv.MemManager {
 }
 
 // ShowStatus implements kv.Storage interface.
+func (s *Store) GetBatchManager() kv.BatchManager { return nil }
+
+// ShowStatus implements kv.Storage interface.
 func (s *Store) ShowStatus(ctx context.Context, key string) (interface{}, error) { return nil, nil }

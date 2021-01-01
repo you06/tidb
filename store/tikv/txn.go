@@ -66,7 +66,6 @@ type tikvTxn struct {
 	mu        sync.Mutex // For thread-safe LockKeys function.
 	setCnt    int64
 	vars      *kv.Variables
-	//committer *twoPhaseCommitter
 	committer Committer
 	lockedCnt int
 

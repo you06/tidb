@@ -1560,7 +1560,13 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
-		if err := s.txn.changePendingToValid(s.currentCtx); err != nil {
+		var err error
+		if s.sessionVars.TxnCtx.IsDeterministic {
+			err = s.txn.changeDeterministicPendingToValid(s.currentCtx, s.store, s.sessionVars.CheckAndGetTxnScope())
+		} else {
+			err = s.txn.changePendingToValid(s.currentCtx)
+		}
+		if err != nil {
 			logutil.BgLogger().Error("active transaction fail",
 				zap.Error(err))
 			s.txn.cleanup()
@@ -2423,7 +2429,8 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 
 // PrepareTSFuture uses to try to get ts future.
 func (s *session) PrepareTSFuture(ctx context.Context) {
-	if !s.txn.validOrPending() {
+	// deterministic txns use shared ts in batch
+	if !s.txn.validOrPending() && !s.GetSessionVars().EnableDeterministic {
 		// Prepare the transaction future if the transaction is invalid (at the beginning of the transaction).
 		txnFuture := s.getTxnFuture(ctx)
 		s.txn.changeInvalidToPending(txnFuture)

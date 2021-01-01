@@ -495,6 +495,8 @@ type Storage interface {
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
 	// GetMemCache return memory mamager of the storage
 	GetMemCache() MemManager
+	// GetBatchManager return global batch manager
+	GetBatchManager() BatchManager
 }
 
 // FnKeyCmp is the function for iterator the keys

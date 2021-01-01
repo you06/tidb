@@ -492,6 +492,18 @@ func (s *mockTikvGrpcServer) CheckLeader(context.Context, *kvrpcpb.CheckLeaderRe
 	return nil, errors.New("unreachable")
 }
 
+func (s *mockTikvGrpcServer) GetCheckpoint(context.Context, *kvrpcpb.GetCheckpointRequest) (*kvrpcpb.GetCheckpointResponse, error) {
+	return nil, errors.New("unreachable")
+}
+
+func (s *mockTikvGrpcServer) WriteCheckpoint(ctx context.Context, in *kvrpcpb.WriteCheckpointRequest) (*kvrpcpb.WriteCheckpointResponse, error) {
+	return nil, errors.New("unreachable")
+}
+
+func (s *mockTikvGrpcServer) DeterministicWrite(ctx context.Context, in *kvrpcpb.DeterministicWriteRequest) (*kvrpcpb.DeterministicWriteResponse, error) {
+	return nil, errors.New("unreachable")
+}
+
 func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) {
 	// prepare a mock tikv grpc server
 	addr := "localhost:56341"

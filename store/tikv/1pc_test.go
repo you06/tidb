@@ -266,7 +266,7 @@ func (s *testOnePCSuite) Test1PCWithMultiDC(c *C) {
 	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
 	err = localTxn.Commit(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(localTxn.committer.isOnePC(), IsFalse)
+	c.Assert(localTxn.committer.(*twoPhaseCommitter).isOnePC(), IsFalse)
 
 	globalTxn := s.begin1PC(c)
 	err = globalTxn.Set([]byte("b"), []byte("b1"))
@@ -274,5 +274,5 @@ func (s *testOnePCSuite) Test1PCWithMultiDC(c *C) {
 	c.Assert(err, IsNil)
 	err = globalTxn.Commit(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(globalTxn.committer.isOnePC(), IsTrue)
+	c.Assert(globalTxn.committer.(*twoPhaseCommitter).isOnePC(), IsTrue)
 }

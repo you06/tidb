@@ -218,6 +218,10 @@ func (s *mockStorage) GetMemCache() MemManager {
 	return nil
 }
 
+func (s *mockStorage) GetBatchManager() BatchManager {
+	return nil
+}
+
 // newMockStorage creates a new mockStorage.
 func newMockStorage() Storage {
 	return &mockStorage{}
