@@ -1830,7 +1830,3 @@ func (c *twoPhaseCommitter) GetTtlManager() *ttlManager {
 func (c *twoPhaseCommitter) GetCleanWg() *sync.WaitGroup {
 	return &c.cleanWg
 }
-
-//func (c *twoPhaseCommitter) GetPrimaryKey() []byte {
-//	return c.primaryKey
-//}

@@ -214,6 +214,10 @@ func (txn *tikvTxn) IsPessimistic() bool {
 	return txn.us.GetOption(kv.Pessimistic) != nil
 }
 
+func (txn *tikvTxn) IsDeterministic() bool {
+	return txn.us.GetOption(kv.Deterministic) != nil
+}
+
 func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikvTxn.Commit", opentracing.ChildOf(span.Context()))
@@ -248,7 +252,11 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// If the txn use pessimistic lock, committer is initialized.
 	committer := txn.committer
 	if committer == nil {
-		committer, err = newTwoPhaseCommitter(txn, connID)
+		if txn.IsDeterministic() {
+			committer, err = newDeterministicCommitter(txn, connID)
+		} else {
+			committer, err = newTwoPhaseCommitter(txn, connID)
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}

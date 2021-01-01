@@ -14,20 +14,20 @@
 package tikv
 
 import (
+	"context"
 	"math"
 	"sync"
 	"sync/atomic"
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 // deterministicCommitter executes a deterministic commit protocol.
@@ -51,6 +51,40 @@ type deterministicCommitter struct {
 	}
 	// regionTxnSize stores the number of keys involved in each region
 	regionTxnSize map[uint64]int
+}
+
+func newDeterministicCommitter(txn *tikvTxn, connID uint64) (*deterministicCommitter, error) {
+	return &deterministicCommitter{
+		store:         txn.store,
+		txn:           txn,
+		startTS:       txn.StartTS(),
+		connID:        connID,
+		regionTxnSize: map[uint64]int{},
+	}, nil
+}
+
+func (c *deterministicCommitter) GetStartTS() uint64 {
+	return c.startTS
+}
+
+func (c *deterministicCommitter) GetCommitTS() uint64 {
+	return c.commitTS
+}
+
+func (c *deterministicCommitter) GetMutations() *memBufferMutations {
+	return c.mutations
+}
+
+func (c *deterministicCommitter) GetTtlManager() *ttlManager {
+	panic("unreachable")
+}
+
+func (c *deterministicCommitter) GetCleanWg() *sync.WaitGroup {
+	return &c.cleanWg
+}
+
+func (c *deterministicCommitter) getDetail() *execdetails.CommitDetails {
+	return (*execdetails.CommitDetails)(atomic.LoadPointer(&c.detail))
 }
 
 func (c *deterministicCommitter) initKeysAndMutations() error {
@@ -152,6 +186,29 @@ func (c *deterministicCommitter) initKeysAndMutations() error {
 	return nil
 }
 
+func (c *deterministicCommitter) isAsyncCommit() bool {
+	return false
+}
+
 func (c *deterministicCommitter) setDetail(d *execdetails.CommitDetails) {
 	atomic.StorePointer(&c.detail, unsafe.Pointer(d))
+}
+
+func (c *deterministicCommitter) pessimisticRollbackMutations(bo *Backoffer, mutations CommitterMutations) error {
+	return nil
+}
+
+func (c *deterministicCommitter) extractKeyExistsErr(key kv.Key) error {
+	return nil
+}
+
+func (c *deterministicCommitter) cleanup(ctx context.Context) {
+	c.cleanWg.Add(1)
+	go func() {
+		c.cleanWg.Done()
+	}()
+}
+
+func (c *deterministicCommitter) execute(context.Context) error {
+	return nil
 }

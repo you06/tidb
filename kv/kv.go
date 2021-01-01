@@ -68,6 +68,8 @@ const (
 	TxnScope
 	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
 	IsStalenessReadOnly
+	// Deterministic indicates whether transaction is deterministic
+	Deterministic
 )
 
 // Priority value for transaction priority.

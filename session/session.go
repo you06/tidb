@@ -1571,6 +1571,9 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if s.sessionVars.TxnCtx.IsPessimistic {
 			s.txn.SetOption(kv.Pessimistic, true)
 		}
+		if s.sessionVars.TxnCtx.IsDeterministic {
+			s.txn.SetOption(kv.Deterministic, true)
+		}
 		if !s.sessionVars.IsAutocommit() {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
