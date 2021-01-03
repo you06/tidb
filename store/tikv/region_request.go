@@ -464,6 +464,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 				failpoint.Return(nil, false, err)
 			}
 		})
+		logutil.BgLogger().Error("MYLOG, on send fail", zap.Bool("resp is nil", resp == nil), zap.Error(err))
 		if e := s.onSendFail(bo, rpcCtx, err); e != nil {
 			return nil, false, errors.Trace(e)
 		}

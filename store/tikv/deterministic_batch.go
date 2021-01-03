@@ -2,6 +2,7 @@ package tikv
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -308,6 +309,7 @@ func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, bat
 			Value: batch.mutations.GetValue(i),
 		}
 	}
+	logutil.BgLogger().Info("MYLOG, write req mutation", zap.String("mutation", fmt.Sprintln(mutations)))
 	req := tikvrpc.NewRequest(tikvrpc.CmdDeterministicWrite, &pb.DeterministicWriteRequest{
 		Mutations:    mutations,
 		StartVersion: b.startTS,
@@ -325,9 +327,11 @@ func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, bat
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
+			logutil.BgLogger().Info("MYLOG, get region error failed res", zap.Error(err))
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
+			logutil.BgLogger().Info("MYLOG, get region error and restart", zap.String("region err", regionErr.String()))
 			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
@@ -336,14 +340,11 @@ func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, bat
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
+			logutil.BgLogger().Info("MYLOG, body missing")
 			return errors.Trace(ErrBodyMissing)
 		}
-		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
-		keyErrs := prewriteResp.GetErrors()
 
-		if len(keyErrs) == 0 {
-			break
-		}
+		break
 	}
 
 	wg.Done()

@@ -340,7 +340,8 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 				errMsg += "\n" + err.Error()
 			}
 		}
-		logutil.BgLogger().Warn(errMsg)
+
+		logutil.BgLogger().Warn(errMsg, zap.Stack("trace"))
 		// Use the first backoff type to generate a MySQL error.
 		return b.types[0].(backoffType).TError()
 	}

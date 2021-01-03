@@ -162,6 +162,8 @@ func (t CmdType) String() string {
 		return "DebugGetRegionProperties"
 	case CmdTxnHeartBeat:
 		return "TxnHeartBeat"
+	case CmdDeterministicWrite:
+		return "DeterministicWrite"
 	}
 	return "Unknown"
 }
@@ -903,7 +905,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Resp, err = client.KvCheckSecondaryLocks(ctx, req.CheckSecondaryLocks())
 	case CmdTxnHeartBeat:
 		resp.Resp, err = client.KvTxnHeartBeat(ctx, req.TxnHeartBeat())
-
+	case CmdDeterministicWrite:
+		resp.Resp, err = client.DeterministicWrite(ctx, req.DeterministicWrite())
 	default:
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}
