@@ -91,6 +91,6 @@ require (
 go 1.13
 
 replace (
-	github.com/ngaut/unistore => github.com/you06/unistore v0.0.0-20210101121117-808ea638fcf6
-	github.com/pingcap/kvproto => github.com/you06/kvproto v0.0.0-20210101125033-01c6619be8e5
+	github.com/ngaut/unistore => github.com/you06/unistore v0.0.0-20210102163015-a59ec47f58c7
+	github.com/pingcap/kvproto => github.com/you06/kvproto v0.0.0-20210101215038-3f63d1d1c88c
 )

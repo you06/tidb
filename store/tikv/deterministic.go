@@ -58,6 +58,7 @@ func newDeterministicCommitter(txn *tikvTxn, connID uint64) (*deterministicCommi
 		store:         txn.store,
 		txn:           txn,
 		startTS:       txn.StartTS(),
+		commitTS:      txn.StartTS() + 1,
 		connID:        connID,
 		regionTxnSize: map[uint64]int{},
 	}, nil

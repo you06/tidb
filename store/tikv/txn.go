@@ -272,10 +272,25 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	err = committer.initKeysAndMutations()
 	initRegion.End()
 	if err != nil {
+		if txn.IsDeterministic() {
+			txn.store.batchManager.removeTxn(txn)
+		}
 		return errors.Trace(err)
 	}
 	if committer.GetMutations().Len() == 0 {
+		if txn.IsDeterministic() {
+			txn.store.batchManager.removeTxn(txn)
+		}
 		return nil
+	}
+
+	if txn.IsDeterministic() {
+		txn.store.batchManager.mutationReady()
+		if txn.store.batchManager.hasConflict(txn) {
+			// retry next batch
+			return kv.ErrWriteConflict.FastGenByArgs(txn.startTS, txn.startTS, txn.commitTS, "[]")
+		}
+		return txn.store.batchManager.getCommitErr()
 	}
 
 	defer func() {

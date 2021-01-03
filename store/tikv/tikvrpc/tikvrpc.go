@@ -79,6 +79,7 @@ const (
 	CmdSplitRegion
 
 	CmdDebugGetRegionProperties CmdType = 2048 + iota
+	CmdDeterministicWrite
 
 	CmdEmpty CmdType = 3072 + iota
 )

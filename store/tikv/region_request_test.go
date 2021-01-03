@@ -504,6 +504,10 @@ func (s *mockTikvGrpcServer) DeterministicWrite(ctx context.Context, in *kvrpcpb
 	return nil, errors.New("unreachable")
 }
 
+func (s *mockTikvGrpcServer) DeleteVersionsByCommitTs(ctx context.Context, in *kvrpcpb.DeleteVersionsByCommitTsRequest) (*kvrpcpb.DeleteVersionsByCommitTsResponse, error) {
+	return nil, errors.New("unreachable")
+}
+
 func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) {
 	// prepare a mock tikv grpc server
 	addr := "localhost:56341"
