@@ -243,6 +243,7 @@ const (
 	locateRegionMaxBackoff         = 20000
 	pessimisticLockMaxBackoff      = 20000
 	pessimisticRollbackMaxBackoff  = 20000
+	waitCheckpointBackoff          = 30000
 )
 
 var (

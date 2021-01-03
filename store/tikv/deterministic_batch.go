@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/store/tikv/oracle"
+
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 
 	"github.com/pingcap/tidb/util/logutil"
@@ -152,9 +154,24 @@ func (b *batchManager) getCommitErr() error {
 	return b.commitErr
 }
 
+func (b *batchManager) newCheckpointBackOffer() *Backoffer {
+	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
+	return bo
+}
+
 // TODO: handle PD server timeout
 func (b *batchManager) writeCheckpointStart() {
 	// write checkpointStart
+
+	bo := b.newCheckpointBackOffer()
+
+	startTS, err := b.store.getTimestampWithRetry(bo, oracle.GlobalTxnScope)
+	// TODO: handle error
+	if err != nil {
+		panic("unexpected error")
+	}
+
+	b.startTS = startTS
 	b.freeReady.Add(1)
 	b.detectDone.Add(1)
 	b.commitDone.Add(1)
