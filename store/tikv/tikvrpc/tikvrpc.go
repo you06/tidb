@@ -385,6 +385,11 @@ func (req *Request) CheckSecondaryLocks() *kvrpcpb.CheckSecondaryLocksRequest {
 	return req.Req.(*kvrpcpb.CheckSecondaryLocksRequest)
 }
 
+// DeterministicWrite returns DeterministicWriteRequest in request.
+func (req *Request) DeterministicWrite() *kvrpcpb.DeterministicWriteRequest {
+	return req.Req.(*kvrpcpb.DeterministicWriteRequest)
+}
+
 // TxnHeartBeat returns TxnHeartBeatRequest in request.
 func (req *Request) TxnHeartBeat() *kvrpcpb.TxnHeartBeatRequest {
 	return req.Req.(*kvrpcpb.TxnHeartBeatRequest)
@@ -635,6 +640,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.CheckTxnStatus().Context = ctx
 	case CmdCheckSecondaryLocks:
 		req.CheckSecondaryLocks().Context = ctx
+	case CmdDeterministicWrite:
+		req.DeterministicWrite().Context = ctx
 	default:
 		return fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -770,6 +777,11 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		p = &kvrpcpb.CheckSecondaryLocksResponse{
 			RegionError: e,
 		}
+	case CmdDeterministicWrite:
+		p = &kvrpcpb.DeterministicWriteResponse{
+			RegionError: e,
+		}
+
 	default:
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}

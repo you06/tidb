@@ -5,18 +5,13 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-
-	"github.com/pingcap/errors"
-
-	"github.com/pingcap/tidb/kv"
 )
 
 const (
@@ -30,32 +25,41 @@ const (
 	txnStateBeforeCommit
 )
 
-type txnState struct {
-	state uint64
-	txn   *tikvTxn
+type batchFuture struct {
+	bm *batchManager
+}
+
+func (b *batchFuture) Wait() (uint64, error) {
+	bm := b.bm
+	bm.startReady.Wait()
+	return bm.startTS, bm.startErr
 }
 
 type batchManager struct {
-	state    uint32
-	txnCount uint32
-	startTS  uint64
-	commitTS uint64
+	state       uint32
+	futureCount uint32
+	txnCount    uint32
+	startTS     uint64
+	commitTS    uint64
 
 	mu           sync.RWMutex
 	freeReady    sync.WaitGroup
 	startReady   sync.WaitGroup
 	commitDone   sync.WaitGroup
 	detectDone   sync.WaitGroup
-	mutations    *memBufferMutations
+	mutations    *PlainMutations
+	startErr     error
 	commitErr    error
 	store        *tikvStore
 	vars         *kv.Variables
+	prevTxns     map[uint32]*tikvTxn
 	txns         map[uint32]*tikvTxn
 	conflictTxns map[uint32]*tikvTxn
 }
 
 func newBatchManager(store *tikvStore) (*batchManager, error) {
 	return &batchManager{
+		state: batchStateFree,
 		store: store,
 		txns:  make(map[uint32]*tikvTxn),
 		vars:  kv.DefaultVars,
@@ -63,26 +67,28 @@ func newBatchManager(store *tikvStore) (*batchManager, error) {
 }
 
 // NextBatch return next batch's startTS when it's ready
-func (b *batchManager) NextBatch(ctx context.Context, txnScope string) (kv.Transaction, error) {
+func (b *batchManager) NextBatch(ctx context.Context) oracle.Future {
 	b.commitDone.Wait()
 	b.freeReady.Wait()
 	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.futureCount++
 	if b.state == batchStateFree {
 		b.state = batchStateStarting
 		b.startReady.Add(1)
 		// allocate a checkpoint for first txn in a batch
 		b.writeCheckpointStart()
 	}
-	b.mu.Unlock()
 
-	b.startReady.Wait()
-	txn, err := newTiKVTxnWithStartTS(b.store, txnScope, b.startTS, b.store.nextReplicaReadSeed())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	b.addTxn(txn)
-
-	return txn, nil
+	return &batchFuture{bm: b}
+	//b.startReady.Wait()
+	//txn, err := newTiKVTxnWithStartTS(b.store, txnScope, b.startTS, b.store.nextReplicaReadSeed())
+	//if err != nil {
+	//	return nil, errors.Trace(err)
+	//}
+	//b.addTxn(txn)
+	//
+	//return txn, nil
 }
 
 func (b *batchManager) Clear() {
@@ -92,6 +98,8 @@ func (b *batchManager) Clear() {
 	b.txnCount = 0
 	b.state = 0
 	b.commitTS = 0
+	b.prevTxns = b.txns
+	b.mutations = nil
 	b.txns = make(map[uint32]*tikvTxn)
 }
 
@@ -101,13 +109,16 @@ func (b *batchManager) begin() {
 	b.startReady.Add(1)
 }
 
-func (b *batchManager) addTxn(txn *tikvTxn) {
+func (b *batchManager) addTxn(txn *tikvTxn) error {
 	b.mu.Lock()
 	b.mu.Unlock()
-	if b.startTS < txn.startTS {
-		panic("unreachable")
+	if b.startTS != txn.startTS {
+		if _, ok := b.prevTxns[txn.snapshot.replicaReadSeed]; !ok {
+			return errors.New("txn init too slow")
+		}
 	}
 	b.txns[txn.snapshot.replicaReadSeed] = txn
+	return nil
 }
 
 func (b *batchManager) removeTxn(txn *tikvTxn) {
@@ -165,13 +176,8 @@ func (b *batchManager) writeCheckpointStart() {
 
 	bo := b.newCheckpointBackOffer()
 
-	startTS, err := b.store.getTimestampWithRetry(bo, oracle.GlobalTxnScope)
-	// TODO: handle error
-	if err != nil {
-		panic("unexpected error")
-	}
+	b.startTS, b.startErr = b.store.getTimestampWithRetry(bo, oracle.GlobalTxnScope)
 
-	b.startTS = startTS
 	b.freeReady.Add(1)
 	b.detectDone.Add(1)
 	b.commitDone.Add(1)
@@ -191,11 +197,22 @@ func (b *batchManager) writeCheckpointRollback() error {
 }
 
 func (b *batchManager) mergeMutations() {
+	var (
+		mutation  *memBufferMutations
+		mutations PlainMutations
+		sizeHint  = 0
+	)
 	for _, txn := range b.txns {
-		mutation := txn.committer.GetMutations()
+		mutation = txn.committer.GetMutations()
+		sizeHint += mutation.Len()
+	}
+	mutations = NewPlainMutations(sizeHint)
+	for _, txn := range b.txns {
+		mutation = txn.committer.GetMutations()
 		var (
-			op  pb.Op
-			key kv.Key
+			op    pb.Op
+			key   []byte
+			value []byte
 		)
 		for i := 0; i < mutation.Len(); i++ {
 			op = mutation.GetOp(i)
@@ -204,10 +221,12 @@ func (b *batchManager) mergeMutations() {
 				continue
 			}
 			key = mutation.GetKey(i)
-			handle := txn.GetMemBuffer().IterWithFlags(key, nil).Handle()
-			b.mutations.Push(op, false, handle)
+			value = mutation.GetValue(i)
+
+			mutations.Push(op, key, value, false)
 		}
 	}
+	b.mutations = &mutations
 }
 
 // groupMutations groups mutations by region, then checks for any large groups and in that case pre-splits the region.
@@ -266,11 +285,14 @@ func (b *batchManager) writeDeterministicGroups(bo *Backoffer, mutations Committ
 	groupWg.Add(len(groups))
 	for _, group := range groups {
 		go func(group groupedMutations) {
+			logutil.BgLogger().Info("MYLOG, write batch")
 			writeBo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, b.vars)
 			b.writeDeterministic(writeBo, &groupWg, group)
 		}(group)
 	}
+	logutil.BgLogger().Info("MYLOG, waiting write batch")
 	groupWg.Wait()
+	logutil.BgLogger().Info("MYLOG, done write batch")
 
 	b.writeCheckpointCommit()
 
@@ -293,8 +315,10 @@ func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, bat
 	}, pb.Context{Priority: pb.CommandPri_High, SyncLog: false})
 
 	for {
+		logutil.BgLogger().Info("MYLOG, send write req")
 		sender := NewRegionRequestSender(b.store.regionCache, b.store.client)
 		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
+		logutil.BgLogger().Info("MYLOG, got write res", zap.Error(err))
 
 		if err != nil {
 			return errors.Trace(err)

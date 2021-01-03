@@ -77,7 +77,7 @@ func (c *deterministicCommitter) GetMutations() *memBufferMutations {
 }
 
 func (c *deterministicCommitter) GetTtlManager() *ttlManager {
-	panic("unreachable")
+	return nil
 }
 
 func (c *deterministicCommitter) GetCleanWg() *sync.WaitGroup {
@@ -108,8 +108,9 @@ func (c *deterministicCommitter) initKeysAndMutations() error {
 			if !flags.HasLocked() {
 				continue
 			}
-			op = pb.Op_Lock
-			lockCnt++
+			continue
+			//op = pb.Op_Lock
+			//lockCnt++
 		} else {
 			value = it.Value()
 			if len(value) > 0 {

@@ -1,7 +1,11 @@
 package kv
 
-import "context"
+import (
+	"context"
+
+	"github.com/pingcap/tidb/store/tikv/oracle"
+)
 
 type BatchManager interface {
-	NextBatch(ctx context.Context, txnScope string) (Transaction, error)
+	NextBatch(ctx context.Context) oracle.Future
 }

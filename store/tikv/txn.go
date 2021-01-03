@@ -202,6 +202,8 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.schemaAmender = val.(SchemaAmender)
 	case kv.CommitHook:
 		txn.commitCallback = val.(func(info kv.TxnInfo, err error))
+	case kv.Deterministic:
+		txn.store.batchManager.addTxn(txn)
 	}
 }
 
@@ -264,7 +266,9 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	defer func() {
 		// For async commit transactions, the ttl manager will be closed in the asynchronous commit goroutine.
 		if !committer.isAsyncCommit() {
-			committer.GetTtlManager().close()
+			if tm := txn.committer.GetTtlManager(); tm != nil {
+				tm.close()
+			}
 		}
 	}()
 

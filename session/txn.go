@@ -174,11 +174,11 @@ func (st *TxnState) changePendingToValid(ctx context.Context) error {
 }
 
 func (st *TxnState) changeDeterministicPendingToValid(ctx context.Context, store kv.Storage, txnScope string) error {
-	txn, err := store.GetBatchManager().NextBatch(ctx, txnScope)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	st.Transaction = txn
+	//txn, err := store.GetBatchManager().NextBatch(ctx, txnScope)
+	//if err != nil {
+	//	return errors.Trace(err)
+	//}
+	//st.Transaction = txn
 	return nil
 }
 
