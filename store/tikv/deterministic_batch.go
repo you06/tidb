@@ -82,14 +82,6 @@ func (b *batchManager) NextBatch(ctx context.Context) oracle.Future {
 	}
 
 	return &batchFuture{bm: b}
-	//b.startReady.Wait()
-	//txn, err := newTiKVTxnWithStartTS(b.store, txnScope, b.startTS, b.store.nextReplicaReadSeed())
-	//if err != nil {
-	//	return nil, errors.Trace(err)
-	//}
-	//b.addTxn(txn)
-	//
-	//return txn, nil
 }
 
 func (b *batchManager) Clear() {
@@ -130,7 +122,7 @@ func (b *batchManager) removeTxn(txn *tikvTxn) {
 	}
 	delete(b.txns, txn.snapshot.replicaReadSeed)
 	if int(b.txnCount) == len(b.txns) {
-		b.detectConflicts()
+		go b.detectConflicts()
 	}
 }
 
@@ -139,7 +131,7 @@ func (b *batchManager) mutationReady() {
 	b.mu.Unlock()
 	b.txnCount++
 	if int(b.txnCount) == len(b.txns) {
-		b.detectConflicts()
+		go b.detectConflicts()
 	}
 }
 
@@ -161,8 +153,10 @@ func (b *batchManager) hasConflict(txn *tikvTxn) bool {
 }
 
 func (b *batchManager) getCommitErr() error {
+	logutil.BgLogger().Info("MYLOG, get commit err")
 	b.freeReady.Wait()
 	defer b.commitDone.Done()
+	logutil.BgLogger().Info("MYLOG, get commit err ok")
 	return b.commitErr
 }
 
@@ -178,6 +172,7 @@ func (b *batchManager) writeCheckpointStart() {
 	bo := b.newCheckpointBackOffer()
 
 	b.startTS, b.startErr = b.store.getTimestampWithRetry(bo, oracle.GlobalTxnScope)
+	b.commitTS = b.startTS + 1
 
 	b.freeReady.Add(1)
 	b.detectDone.Add(1)
@@ -344,6 +339,15 @@ func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, bat
 			return errors.Trace(ErrBodyMissing)
 		}
 
+		if writeResponse, ok := resp.Resp.(*pb.DeterministicWriteResponse); ok {
+			errs := writeResponse.GetErrors()
+			if len(errs) == 0 {
+				logutil.BgLogger().Info("MYLOG, resp got no err")
+			}
+			for _, err := range errs {
+				logutil.BgLogger().Info("MYLOG, resp err", zap.Stringer("err", err))
+			}
+		}
 		break
 	}
 
