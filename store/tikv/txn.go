@@ -202,8 +202,8 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.schemaAmender = val.(SchemaAmender)
 	case kv.CommitHook:
 		txn.commitCallback = val.(func(info kv.TxnInfo, err error))
-	case kv.Deterministic:
-		txn.store.batchManager.addTxn(txn)
+		//case kv.Deterministic:
+		//	txn.store.batchManager.addTxn(txn)
 	}
 }
 
@@ -283,13 +283,13 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	if committer.GetMutations().Len() == 0 {
 		if txn.IsDeterministic() {
-			txn.store.batchManager.removeTxn(txn)
+			txn.store.batchManager.removeTxnReady(txn)
 		}
 		return nil
 	}
 
 	if txn.IsDeterministic() {
-		txn.store.batchManager.mutationReady()
+		txn.store.batchManager.mutationReady(txn)
 		if txn.store.batchManager.hasConflict(txn) {
 			// retry next batch
 			return kv.ErrWriteConflict.FastGenByArgs(txn.startTS, txn.startTS, txn.commitTS, "[]")

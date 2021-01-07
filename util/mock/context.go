@@ -280,7 +280,7 @@ func (c *Context) HasLockedTables() bool {
 }
 
 // PrepareTSFuture implements the sessionctx.Context interface.
-func (c *Context) PrepareTSFuture(ctx context.Context) {
+func (c *Context) PrepareTSFuture(ctx context.Context, isDDL bool) {
 }
 
 // Close implements the sessionctx.Context interface.

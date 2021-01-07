@@ -73,6 +73,22 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	return ast.IsReadOnly(node)
 }
 
+// CanDeterministic
+func CanDeterministic(node ast.Node) bool {
+	switch node.(type) {
+	case *ast.UseStmt, *ast.SetStmt,
+		*ast.DropBindingStmt, *ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropSequenceStmt,
+		*ast.DropStatisticsStmt, *ast.DropStatsStmt, *ast.DropTableStmt, *ast.DropUserStmt,
+		*ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateBindingStmt, *ast.CreateSequenceStmt,
+		*ast.CreateStatisticsStmt, *ast.CreateTableStmt, *ast.CreateUserStmt, *ast.CreateViewStmt,
+		*ast.AlterDatabaseStmt, *ast.AlterInstanceStmt, *ast.AlterSequenceStmt,
+		*ast.AlterTableSpec, *ast.AlterTableStmt, *ast.AlterUserStmt:
+		return false
+	default:
+		return true
+	}
+}
+
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
@@ -97,13 +113,18 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 		if fp != nil {
 			if !useMaxTS(sctx, fp) {
-				sctx.PrepareTSFuture(ctx)
+				sctx.PrepareTSFuture(ctx, false)
 			}
 			return fp, fp.OutputNames(), nil
 		}
 	}
 
-	sctx.PrepareTSFuture(ctx)
+	//if sctx.GetSessionVars().ConnectionID > 0 {
+	//	logutil.Logger(ctx).Info("MYLOG call ts future",
+	//		zap.Bool("can deterministic", CanDeterministic(node)),
+	//		zap.String("real type", fmt.Sprintf("%T", node)))
+	//}
+	sctx.PrepareTSFuture(ctx, CanDeterministic(node))
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
 	stmtHints, warns := handleStmtHints(tableHints)

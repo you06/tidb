@@ -1395,7 +1395,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	// NewPrepareExec may need startTS to build the executor, for example prepare statement has subquery in int.
 	// So we have to call PrepareTxnCtx here.
 	s.PrepareTxnCtx(ctx)
-	s.PrepareTSFuture(ctx)
+	s.PrepareTSFuture(ctx, false)
 	prepareExec := executor.NewPrepareExec(s, infoschema.GetInfoSchema(s), sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
@@ -1462,7 +1462,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 		resultSet, err = stmt.PointGet(ctx, is)
 		s.txn.changeToInvalid()
 	case *plannercore.Update:
-		s.PrepareTSFuture(ctx)
+		s.PrepareTSFuture(ctx, false)
 		stmtCtx.Priority = kv.PriorityHigh
 		resultSet, err = runStmt(ctx, s, stmt)
 	default:
@@ -1573,7 +1573,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if s.sessionVars.TxnCtx.IsPessimistic {
 			s.txn.SetOption(kv.Pessimistic, true)
 		}
-		if s.sessionVars.TxnCtx.IsDeterministic {
+		if s.sessionVars.ConnectionID > 0 && s.sessionVars.TxnCtx.IsDeterministic {
 			s.txn.SetOption(kv.Deterministic, true)
 		}
 		if !s.sessionVars.IsAutocommit() {
@@ -2424,12 +2424,13 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 }
 
 // PrepareTSFuture uses to try to get ts future.
-func (s *session) PrepareTSFuture(ctx context.Context) {
+func (s *session) PrepareTSFuture(ctx context.Context, canDeterministic bool) {
 	// deterministic txns use shared ts in batch
 	if !s.txn.validOrPending() {
 		// Prepare the transaction future if the transaction is invalid (at the beginning of the transaction).
 		var future *txnFuture
-		if s.GetSessionVars().EnableDeterministic {
+		sessionVars := s.GetSessionVars()
+		if sessionVars.ConnectionID > 0 && sessionVars.EnableDeterministic && canDeterministic {
 			future = &txnFuture{
 				future:   s.store.GetBatchManager().NextBatch(ctx),
 				store:    s.store,

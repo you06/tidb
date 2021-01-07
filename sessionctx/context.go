@@ -110,7 +110,7 @@ type Context interface {
 	// HasLockedTables uses to check whether this session locked any tables.
 	HasLockedTables() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
-	PrepareTSFuture(ctx context.Context)
+	PrepareTSFuture(ctx context.Context, canDeterministic bool)
 	// StoreIndexUsage stores the index usage information.
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
 }

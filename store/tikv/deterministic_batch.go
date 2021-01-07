@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -43,19 +44,19 @@ type batchManager struct {
 	startTS     uint64
 	commitTS    uint64
 
-	mu           sync.RWMutex
-	freeReady    sync.WaitGroup
-	startReady   sync.WaitGroup
-	commitDone   sync.WaitGroup
-	detectDone   sync.WaitGroup
-	mutations    *PlainMutations
-	startErr     error
-	commitErr    error
-	store        *tikvStore
-	vars         *kv.Variables
-	prevTxns     map[uint32]*tikvTxn
-	txns         map[uint32]*tikvTxn
-	conflictTxns map[uint32]*tikvTxn
+	mu         sync.RWMutex
+	freeReady  sync.WaitGroup
+	startReady sync.WaitGroup
+	commitDone sync.WaitGroup
+	detectDone sync.WaitGroup
+	mutations  *PlainMutations
+	startErr   error
+	commitErr  error
+	store      *tikvStore
+	vars       *kv.Variables
+	prevTxns   map[uint32]*tikvTxn
+	txns       map[uint32]*tikvTxn
+	//conflictTxns map[uint32]*tikvTxn
 }
 
 func newBatchManager(store *tikvStore) (*batchManager, error) {
@@ -69,6 +70,7 @@ func newBatchManager(store *tikvStore) (*batchManager, error) {
 
 // NextBatch return next batch's startTS when it's ready
 func (b *batchManager) NextBatch(ctx context.Context) oracle.Future {
+	logutil.Logger(ctx).Info("MYLOG call NextBatch", zap.Stack("trace"))
 	b.commitDone.Wait()
 	b.freeReady.Wait()
 	b.mu.Lock()
@@ -78,7 +80,7 @@ func (b *batchManager) NextBatch(ctx context.Context) oracle.Future {
 		b.state = batchStateStarting
 		b.startReady.Add(1)
 		// allocate a checkpoint for first txn in a batch
-		b.writeCheckpointStart()
+		go b.writeCheckpointStart()
 	}
 
 	return &batchFuture{bm: b}
@@ -88,49 +90,65 @@ func (b *batchManager) Clear() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.state = batchStateFree
+	b.futureCount = 0
 	b.txnCount = 0
-	b.state = 0
+	b.startTS = 0
 	b.commitTS = 0
-	b.prevTxns = b.txns
 	b.mutations = nil
+	b.startErr = nil
+	b.commitErr = nil
+	b.prevTxns = b.txns
 	b.txns = make(map[uint32]*tikvTxn)
 }
 
-func (b *batchManager) begin() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.startReady.Add(1)
-}
-
-func (b *batchManager) addTxn(txn *tikvTxn) error {
-	b.mu.Lock()
-	b.mu.Unlock()
-	if b.startTS != txn.startTS {
-		if _, ok := b.prevTxns[txn.snapshot.replicaReadSeed]; !ok {
-			return errors.New("txn init too slow")
-		}
-	}
-	b.txns[txn.snapshot.replicaReadSeed] = txn
-	return nil
-}
+//func (b *batchManager) begin() {
+//	b.mu.Lock()
+//	defer b.mu.Unlock()
+//	b.startReady.Add(1)
+//}
 
 func (b *batchManager) removeTxn(txn *tikvTxn) {
 	b.mu.Lock()
-	b.mu.Unlock()
+	defer b.mu.Unlock()
 	if _, ok := b.txns[txn.snapshot.replicaReadSeed]; !ok {
 		panic("unreachable")
 	}
 	delete(b.txns, txn.snapshot.replicaReadSeed)
-	if int(b.txnCount) == len(b.txns) {
+	//if int(b.txnCount) == len(b.txns) {
+	//	logutil.BgLogger().Info("MYLOG trigger detectConflicts", zap.Uint32("txn", txn.snapshot.replicaReadSeed))
+	//	go b.detectConflicts()
+	//}
+}
+
+func (b *batchManager) removeTxnReady(txn *tikvTxn) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	//if _, ok := b.txns[txn.snapshot.replicaReadSeed]; !ok {
+	//	panic("unreachable")
+	//}
+	//delete(b.txns, txn.snapshot.replicaReadSeed)
+	b.futureCount--
+	if b.txnCount == b.futureCount {
+		//logutil.BgLogger().Info("MYLOG trigger detectConflicts remove",
+		//	zap.Uint32("txn", txn.snapshot.replicaReadSeed),
+		//	zap.Uint64("startTS", b.startTS),
+		//	zap.Uint32("txnCount", b.txnCount),
+		//	zap.Uint32("futureCount", b.futureCount))
 		go b.detectConflicts()
 	}
 }
 
-func (b *batchManager) mutationReady() {
+func (b *batchManager) mutationReady(txn *tikvTxn) {
 	b.mu.Lock()
-	b.mu.Unlock()
+	defer b.mu.Unlock()
+	b.txns[txn.snapshot.replicaReadSeed] = txn
 	b.txnCount++
-	if int(b.txnCount) == len(b.txns) {
+	if b.txnCount == b.futureCount {
+		//logutil.BgLogger().Info("MYLOG trigger detectConflicts ready",
+		//	zap.Uint32("txn", txn.snapshot.replicaReadSeed),
+		//	zap.Uint64("startTS", b.startTS),
+		//	zap.Uint32("txnCount", b.txnCount),
+		//	zap.Uint32("futureCount", b.futureCount))
 		go b.detectConflicts()
 	}
 }
@@ -153,10 +171,10 @@ func (b *batchManager) hasConflict(txn *tikvTxn) bool {
 }
 
 func (b *batchManager) getCommitErr() error {
-	logutil.BgLogger().Info("MYLOG, get commit err")
+	//logutil.BgLogger().Info("MYLOG, get commit err")
 	b.freeReady.Wait()
 	defer b.commitDone.Done()
-	logutil.BgLogger().Info("MYLOG, get commit err ok")
+	//logutil.BgLogger().Info("MYLOG, get commit err ok")
 	return b.commitErr
 }
 
@@ -171,9 +189,11 @@ func (b *batchManager) writeCheckpointStart() {
 
 	bo := b.newCheckpointBackOffer()
 
+	time.Sleep(50 * time.Millisecond)
 	b.startTS, b.startErr = b.store.getTimestampWithRetry(bo, oracle.GlobalTxnScope)
 	b.commitTS = b.startTS + 1
 
+	logutil.BgLogger().Info("MYLOG got startTS", zap.Uint64("startTS", b.startTS))
 	b.freeReady.Add(1)
 	b.detectDone.Add(1)
 	b.commitDone.Add(1)
@@ -181,7 +201,7 @@ func (b *batchManager) writeCheckpointStart() {
 }
 
 func (b *batchManager) writeCheckpointCommit() error {
-
+	b.Clear()
 	b.freeReady.Done()
 	return nil
 }
