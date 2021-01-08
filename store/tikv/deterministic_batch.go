@@ -2,7 +2,6 @@ package tikv
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -70,7 +69,7 @@ func newBatchManager(store *tikvStore) (*batchManager, error) {
 
 // NextBatch return next batch's startTS when it's ready
 func (b *batchManager) NextBatch(ctx context.Context) oracle.Future {
-	logutil.Logger(ctx).Info("MYLOG call NextBatch", zap.Stack("trace"))
+	//logutil.Logger(ctx).Info("MYLOG call NextBatch", zap.Stack("trace"))
 	b.commitDone.Wait()
 	b.freeReady.Wait()
 	b.mu.Lock()
@@ -189,7 +188,7 @@ func (b *batchManager) writeCheckpointStart() {
 
 	bo := b.newCheckpointBackOffer()
 
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(1500 * time.Microsecond)
 	b.startTS, b.startErr = b.store.getTimestampWithRetry(bo, oracle.GlobalTxnScope)
 	b.commitTS = b.startTS + 1
 
@@ -324,7 +323,7 @@ func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, bat
 			Value: batch.mutations.GetValue(i),
 		}
 	}
-	logutil.BgLogger().Info("MYLOG, write req mutation", zap.String("mutation", fmt.Sprintln(mutations)))
+	//logutil.BgLogger().Info("MYLOG, write req mutation", zap.String("mutation", fmt.Sprintln(mutations)))
 	req := tikvrpc.NewRequest(tikvrpc.CmdDeterministicWrite, &pb.DeterministicWriteRequest{
 		Mutations:    mutations,
 		StartVersion: b.startTS,
