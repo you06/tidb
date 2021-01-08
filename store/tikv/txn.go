@@ -294,7 +294,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 			// retry next batch
 			return kv.ErrWriteConflict.FastGenByArgs(txn.startTS, txn.startTS, txn.commitTS, "[]")
 		}
-		return txn.store.batchManager.getCommitErr()
+		return txn.store.batchManager.getCommitErr(txn.commitTS)
 	}
 
 	defer func() {

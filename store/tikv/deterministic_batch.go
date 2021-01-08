@@ -16,14 +16,17 @@ import (
 )
 
 const (
-	CheckPointKey = "checkpoint"
-
-	batchStateFree uint32 = iota
+	batchStateFree uint32 = 1 << iota
 	batchStateStarting
-	batchStateProgress
+	batchStateExecuting
+	batchStateDetecting
+	batchStateCommitting
+
+	batchStateCanNext = batchStateFree | batchStateStarting
 
 	txnStateInit uint64 = iota
 	txnStateBeforeCommit
+	CheckPointKey = "checkpoint"
 )
 
 type batchFuture struct {
@@ -32,7 +35,11 @@ type batchFuture struct {
 
 func (b *batchFuture) Wait() (uint64, error) {
 	bm := b.bm
-	bm.startReady.Wait()
+	bm.startMutex.Lock()
+	for atomic.LoadUint32(&bm.state) == batchStateStarting {
+		bm.startReady.Wait()
+	}
+	bm.startMutex.Unlock()
 	return bm.startTS, bm.startErr
 }
 
@@ -43,44 +50,59 @@ type batchManager struct {
 	startTS     uint64
 	commitTS    uint64
 
-	mu         sync.RWMutex
-	freeReady  sync.WaitGroup
-	startReady sync.WaitGroup
-	commitDone sync.WaitGroup
-	detectDone sync.WaitGroup
-	mutations  *PlainMutations
-	startErr   error
-	commitErr  error
-	store      *tikvStore
-	vars       *kv.Variables
-	prevTxns   map[uint32]*tikvTxn
-	txns       map[uint32]*tikvTxn
+	mu          sync.Mutex
+	freeMutex   sync.Mutex
+	freeReady   *sync.Cond
+	startMutex  sync.Mutex
+	startReady  *sync.Cond
+	detectMutex sync.Mutex
+	detectCond  *sync.Cond
+	commitMutex sync.Mutex
+	commitReady *sync.Cond
+	mutations   *PlainMutations
+	startErr    error
+	errMutex    sync.Mutex
+	commitErrs  map[uint64]error
+	store       *tikvStore
+	vars        *kv.Variables
+	prevTxns    map[uint32]*tikvTxn
+	txns        map[uint32]*tikvTxn
 	//conflictTxns map[uint32]*tikvTxn
 }
 
 func newBatchManager(store *tikvStore) (*batchManager, error) {
-	return &batchManager{
-		state: batchStateFree,
-		store: store,
-		txns:  make(map[uint32]*tikvTxn),
-		vars:  kv.DefaultVars,
-	}, nil
+	bm := batchManager{
+		state:      batchStateFree,
+		store:      store,
+		txns:       make(map[uint32]*tikvTxn),
+		vars:       kv.DefaultVars,
+		commitErrs: make(map[uint64]error),
+	}
+	bm.freeReady = sync.NewCond(&bm.freeMutex)
+	bm.startReady = sync.NewCond(&bm.startMutex)
+	bm.detectCond = sync.NewCond(&bm.detectMutex)
+	bm.commitReady = sync.NewCond(&bm.commitMutex)
+	return &bm, nil
 }
 
 // NextBatch return next batch's startTS when it's ready
 func (b *batchManager) NextBatch(ctx context.Context) oracle.Future {
 	//logutil.Logger(ctx).Info("MYLOG call NextBatch", zap.Stack("trace"))
-	b.commitDone.Wait()
-	b.freeReady.Wait()
+	b.freeMutex.Lock()
+	for atomic.LoadUint32(&b.state)&batchStateCanNext == 0 {
+		b.freeReady.Wait()
+	}
+	b.freeMutex.Unlock()
+
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	b.futureCount++
-	if b.state == batchStateFree {
-		b.state = batchStateStarting
-		b.startReady.Add(1)
+	if atomic.LoadUint32(&b.state) == batchStateFree {
+		//b.state = batchStateExecuting
+		atomic.StoreUint32(&b.state, batchStateStarting)
 		// allocate a checkpoint for first txn in a batch
 		go b.writeCheckpointStart()
 	}
+	b.mu.Unlock()
 
 	return &batchFuture{bm: b}
 }
@@ -95,9 +117,11 @@ func (b *batchManager) Clear() {
 	b.commitTS = 0
 	b.mutations = nil
 	b.startErr = nil
-	b.commitErr = nil
+	//b.commitErr = nil
 	b.prevTxns = b.txns
 	b.txns = make(map[uint32]*tikvTxn)
+	atomic.StoreUint32(&b.state, batchStateFree)
+	b.freeReady.Broadcast()
 }
 
 //func (b *batchManager) begin() {
@@ -153,28 +177,52 @@ func (b *batchManager) mutationReady(txn *tikvTxn) {
 }
 
 func (b *batchManager) detectConflicts() {
+	//logutil.BgLogger().Info("MYLOG detect conflict")
+	atomic.StoreUint32(&b.state, batchStateDetecting)
 	var conflictTxns []*tikvTxn
 	// implement detection
 	for _, txn := range conflictTxns {
 		delete(b.txns, txn.snapshot.replicaReadSeed)
 	}
-	b.detectDone.Done()
-	b.commitDone.Add(len(b.txns) - 1)
-	b.commitErr = b.commit()
+	atomic.StoreUint32(&b.state, batchStateCommitting)
+	b.detectCond.Broadcast()
+	//b.commitDone.Add(len(b.txns) - 1)
+	var (
+		commitTS = b.commitTS
+		err      error
+	)
+	err = b.commit()
+	if err != nil {
+		b.errMutex.Lock()
+		b.commitErrs[commitTS] = err
+		b.errMutex.Unlock()
+	}
 }
 
 func (b *batchManager) hasConflict(txn *tikvTxn) bool {
-	b.detectDone.Wait()
+	b.detectMutex.Lock()
+	for atomic.LoadUint32(&b.state) != batchStateCommitting {
+		b.detectCond.Wait()
+	}
 	_, ok := b.txns[txn.snapshot.replicaReadSeed]
+	b.detectMutex.Unlock()
 	return !ok
 }
 
-func (b *batchManager) getCommitErr() error {
-	//logutil.BgLogger().Info("MYLOG, get commit err")
-	b.freeReady.Wait()
-	defer b.commitDone.Done()
-	//logutil.BgLogger().Info("MYLOG, get commit err ok")
-	return b.commitErr
+func (b *batchManager) getCommitErr(commitTS uint64) error {
+	//logutil.BgLogger().Info("MYLOG try get commit err", zap.Uint64("commitTS", commitTS))
+	batchCommitTS := atomic.LoadUint64(&b.commitTS)
+	if batchCommitTS == commitTS {
+		b.freeMutex.Lock()
+		for atomic.LoadUint32(&b.state) != batchStateFree {
+			b.freeReady.Wait()
+		}
+		b.freeMutex.Unlock()
+	}
+	//logutil.BgLogger().Info("MYLOG got commit err", zap.Uint64("commitTS", commitTS))
+	b.errMutex.Lock()
+	defer b.errMutex.Unlock()
+	return b.commitErrs[commitTS]
 }
 
 func (b *batchManager) newCheckpointBackOffer() *Backoffer {
@@ -192,22 +240,19 @@ func (b *batchManager) writeCheckpointStart() {
 	b.startTS, b.startErr = b.store.getTimestampWithRetry(bo, oracle.GlobalTxnScope)
 	b.commitTS = b.startTS + 1
 
+	atomic.StoreUint32(&b.state, batchStateExecuting)
+	b.startReady.Broadcast()
+
 	logutil.BgLogger().Info("MYLOG got startTS", zap.Uint64("startTS", b.startTS))
-	b.freeReady.Add(1)
-	b.detectDone.Add(1)
-	b.commitDone.Add(1)
-	b.startReady.Done()
 }
 
 func (b *batchManager) writeCheckpointCommit() error {
 	b.Clear()
-	b.freeReady.Done()
 	return nil
 }
 
 func (b *batchManager) writeCheckpointRollback() error {
-
-	b.freeReady.Done()
+	b.Clear()
 	return nil
 }
 
@@ -231,7 +276,7 @@ func (b *batchManager) mergeMutations() {
 		)
 		for i := 0; i < mutation.Len(); i++ {
 			op = mutation.GetOp(i)
-			// ignore pessimistic
+			// ignore lock
 			if op == pb.Op_Lock {
 				continue
 			}
@@ -300,17 +345,13 @@ func (b *batchManager) writeDeterministicGroups(bo *Backoffer, mutations Committ
 	groupWg.Add(len(groups))
 	for _, group := range groups {
 		go func(group groupedMutations) {
-			logutil.BgLogger().Info("MYLOG, write batch")
 			writeBo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, b.vars)
 			b.writeDeterministic(writeBo, &groupWg, group)
 		}(group)
 	}
-	logutil.BgLogger().Info("MYLOG, waiting write batch")
 	groupWg.Wait()
-	logutil.BgLogger().Info("MYLOG, done write batch")
 
 	b.writeCheckpointCommit()
-
 	return nil
 }
 
@@ -331,21 +372,21 @@ func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, bat
 	}, pb.Context{Priority: pb.CommandPri_High, SyncLog: false})
 
 	for {
-		logutil.BgLogger().Info("MYLOG, send write req")
+		//logutil.BgLogger().Info("MYLOG, send write req")
 		sender := NewRegionRequestSender(b.store.regionCache, b.store.client)
 		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
-		logutil.BgLogger().Info("MYLOG, got write res", zap.Error(err))
+		//logutil.BgLogger().Info("MYLOG, got write res", zap.Error(err))
 
 		if err != nil {
 			return errors.Trace(err)
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			logutil.BgLogger().Info("MYLOG, get region error failed res", zap.Error(err))
+			//logutil.BgLogger().Info("MYLOG, get region error failed res", zap.Error(err))
 			return errors.Trace(err)
 		}
 		if regionErr != nil {
-			logutil.BgLogger().Info("MYLOG, get region error and restart", zap.String("region err", regionErr.String()))
+			//logutil.BgLogger().Info("MYLOG, get region error and restart", zap.String("region err", regionErr.String()))
 			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
 				return errors.Trace(err)
@@ -354,17 +395,18 @@ func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, bat
 			return errors.Trace(err)
 		}
 		if resp.Resp == nil {
-			logutil.BgLogger().Info("MYLOG, body missing")
+			//logutil.BgLogger().Info("MYLOG, body missing")
 			return errors.Trace(ErrBodyMissing)
 		}
 
 		if writeResponse, ok := resp.Resp.(*pb.DeterministicWriteResponse); ok {
 			errs := writeResponse.GetErrors()
 			if len(errs) == 0 {
-				logutil.BgLogger().Info("MYLOG, resp got no err")
-			}
-			for _, err := range errs {
-				logutil.BgLogger().Info("MYLOG, resp err", zap.Stringer("err", err))
+				//logutil.BgLogger().Info("MYLOG, resp got no err")
+			} else {
+				for _, err := range errs {
+					logutil.BgLogger().Info("MYLOG, resp err", zap.Stringer("err", err))
+				}
 			}
 		}
 		break
