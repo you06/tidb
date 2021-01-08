@@ -76,16 +76,20 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 // CanDeterministic
 func CanDeterministic(node ast.Node) bool {
 	switch node.(type) {
-	case *ast.UseStmt, *ast.SetStmt,
-		*ast.DropBindingStmt, *ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropSequenceStmt,
-		*ast.DropStatisticsStmt, *ast.DropStatsStmt, *ast.DropTableStmt, *ast.DropUserStmt,
-		*ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateBindingStmt, *ast.CreateSequenceStmt,
-		*ast.CreateStatisticsStmt, *ast.CreateTableStmt, *ast.CreateUserStmt, *ast.CreateViewStmt,
-		*ast.AlterDatabaseStmt, *ast.AlterInstanceStmt, *ast.AlterSequenceStmt,
-		*ast.AlterTableSpec, *ast.AlterTableStmt, *ast.AlterUserStmt:
-		return false
-	default:
+	//case *ast.UseStmt, *ast.SetStmt,
+	//	*ast.DropBindingStmt, *ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropSequenceStmt,
+	//	*ast.DropStatisticsStmt, *ast.DropStatsStmt, *ast.DropTableStmt, *ast.DropUserStmt,
+	//	*ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateBindingStmt, *ast.CreateSequenceStmt,
+	//	*ast.CreateStatisticsStmt, *ast.CreateTableStmt, *ast.CreateUserStmt, *ast.CreateViewStmt,
+	//	*ast.AlterDatabaseStmt, *ast.AlterInstanceStmt, *ast.AlterSequenceStmt,
+	//	*ast.AlterTableSpec, *ast.AlterTableStmt, *ast.AlterUserStmt:
+	//	return false
+	//default:
+	//	return true
+	case *ast.InsertStmt:
 		return true
+	default:
+		return false
 	}
 }
 
