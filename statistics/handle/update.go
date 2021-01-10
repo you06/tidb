@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -805,8 +804,10 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 	if float64(tbl.ModifyCount)/float64(tbl.Count) <= autoAnalyzeRatio {
 		return false, ""
 	}
+	// FIXME: analyze table is required
+	return false, ""
 	// Tests if current time is within the time period.
-	return timeutil.WithinDayTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tbl.Count, autoAnalyzeRatio)
+	//return timeutil.WithinDayTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tbl.Count, autoAnalyzeRatio)
 }
 
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
