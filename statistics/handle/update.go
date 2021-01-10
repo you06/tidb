@@ -795,6 +795,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 	if !analyzed {
 		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
 		dur := time.Since(t)
+		return false, ""
 		return dur >= limit, fmt.Sprintf("table unanalyzed, time since last updated %vs", dur)
 	}
 	// Auto analyze is disabled.
@@ -805,6 +806,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 	if float64(tbl.ModifyCount)/float64(tbl.Count) <= autoAnalyzeRatio {
 		return false, ""
 	}
+	return false, ""
 	// Tests if current time is within the time period.
 	return timeutil.WithinDayTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tbl.Count, autoAnalyzeRatio)
 }
