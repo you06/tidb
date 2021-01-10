@@ -107,12 +107,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 		if fp != nil {
 			if !useMaxTS(sctx, fp) {
-				if sctx.GetSessionVars().ConnectionID > 0 {
-					//logutil.Logger(ctx).Info("MYLOG call ts future use fp",
-					//	zap.Bool("can deterministic", CanDeterministic(node)),
-					//	zap.String("real type", fmt.Sprintf("%T", node)),
-					//	zap.String("text", node.Text()))
-				}
+				logutil.Logger(ctx).Info("MYLOG call ts future use fp",
+					zap.Bool("can deterministic", CanDeterministic(node)),
+					zap.String("real type", fmt.Sprintf("%T", node)),
+					zap.String("text", node.Text()),
+					zap.Uint64("conn id", sctx.GetSessionVars().ConnectionID),
+					zap.Bool("deterministic", sctx.GetSessionVars().EnableDeterministic))
 				sctx.PrepareTSFuture(ctx, CanDeterministic(node))
 			}
 			return fp, fp.OutputNames(), nil
@@ -120,10 +120,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	//if sctx.GetSessionVars().ConnectionID > 0 {
-	//	logutil.Logger(ctx).Info("MYLOG call ts future",
-	//		zap.Bool("can deterministic", CanDeterministic(node)),
-	//		zap.String("real type", fmt.Sprintf("%T", node)),
-	//		zap.String("text", node.Text()))
+	logutil.Logger(ctx).Info("MYLOG call ts future",
+		zap.Bool("can deterministic", CanDeterministic(node)),
+		zap.String("real type", fmt.Sprintf("%T", node)),
+		zap.String("text", node.Text()),
+		zap.Uint64("conn id", sctx.GetSessionVars().ConnectionID),
+		zap.Bool("deterministic", sctx.GetSessionVars().EnableDeterministic))
 	//}
 	sctx.PrepareTSFuture(ctx, CanDeterministic(node))
 
