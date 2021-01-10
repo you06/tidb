@@ -114,8 +114,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 						zap.String("text", node.Text()),
 						zap.Uint64("conn id", sctx.GetSessionVars().ConnectionID),
 						zap.Bool("deterministic", sctx.GetSessionVars().EnableDeterministic))
-					sctx.PrepareTSFuture(ctx, CanDeterministic(node))
 				}
+				sctx.PrepareTSFuture(ctx, CanDeterministic(node))
 			}
 			return fp, fp.OutputNames(), nil
 		}
