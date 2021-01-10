@@ -807,6 +807,8 @@ func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string, 
 	}
 	defer s.sysSessionPool().Put(tmp)
 	se := tmp.(*session)
+	// do not use deterministic for inner session
+	se.sessionVars.EnableDeterministic = false
 	// The special session will share the `InspectionTableCache` with current session
 	// if the current session in inspection mode.
 	if cache := s.sessionVars.InspectionTableCache; cache != nil {
