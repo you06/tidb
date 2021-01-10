@@ -19,7 +19,6 @@ import (
 const (
 	batchStateFree uint32 = 1 << iota
 	batchStateStarting
-	batchStateStarted
 	batchStateExecuting
 	batchStateDetecting
 	batchStateCommitting
@@ -52,25 +51,27 @@ type batchManager struct {
 	readyCount  uint32
 	startTS     uint64
 	commitTS    uint64
+	keyLen      uint64
 
-	mu          sync.Mutex
-	freeMutex   sync.Mutex
-	freeReady   *sync.Cond
-	startMutex  sync.Mutex
-	startReady  *sync.Cond
-	detectMutex sync.Mutex
-	detectCond  *sync.Cond
-	commitMutex sync.Mutex
-	commitReady *sync.Cond
-	clearReady  sync.WaitGroup
-	mutations   *PlainMutations
-	startErr    error
-	errMutex    sync.Mutex
-	commitErrs  map[uint64]error
-	store       *tikvStore
-	vars        *kv.Variables
-	prevTxns    map[uint32]*tikvTxn
-	txns        map[uint32]*tikvTxn
+	mu            sync.Mutex
+	freeMutex     sync.Mutex
+	freeReady     *sync.Cond
+	startMutex    sync.Mutex
+	startReady    *sync.Cond
+	detectMutex   sync.Mutex
+	detectCond    *sync.Cond
+	commitMutex   sync.Mutex
+	commitReady   *sync.Cond
+	clearReady    sync.WaitGroup
+	mutations     *PlainMutations
+	lockMutations *PlainMutations
+	startErr      error
+	errMutex      sync.Mutex
+	commitErrs    map[uint64]error
+	store         *tikvStore
+	vars          *kv.Variables
+	prevTxns      map[uint32]*tikvTxn
+	txns          map[uint32]*tikvTxn
 	//conflictTxns map[uint32]*tikvTxn
 }
 
@@ -119,9 +120,9 @@ WAIT:
 }
 
 func (b *batchManager) Clear() {
-	//logutil.BgLogger().Info("MYLOG wait clear ready", zap.Uint64("start ts", b.startTS))
+	logutil.BgLogger().Info("MYLOG wait clear ready", zap.Uint64("start ts", b.startTS))
 	b.clearReady.Wait()
-	//logutil.BgLogger().Info("MYLOG wait clear ready done", zap.Uint64("start ts", b.startTS))
+	logutil.BgLogger().Info("MYLOG wait clear ready done", zap.Uint64("start ts", b.startTS))
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.futureCount = 0
@@ -130,6 +131,7 @@ func (b *batchManager) Clear() {
 	b.startTS = 0
 	b.commitTS = 0
 	b.mutations = nil
+	b.keyLen = 0
 	b.startErr = nil
 	//b.commitErr = nil
 	b.prevTxns = b.txns
@@ -299,6 +301,8 @@ func (b *batchManager) detectConflicts() {
 				b.mu.Lock()
 				delete(b.txns, txns[i].snapshot.replicaReadSeed)
 				b.mu.Unlock()
+			} else {
+				atomic.AddUint64(&b.keyLen, uint64(mutation.Len()))
 			}
 			wg.Done()
 		}(i)
@@ -391,35 +395,35 @@ func (b *batchManager) writeCheckpointRollback() error {
 
 func (b *batchManager) mergeMutations() {
 	var (
-		mutation  *memBufferMutations
-		mutations PlainMutations
-		sizeHint  = 0
+		ops                = make([]pb.Op, int(b.keyLen))
+		keys               = make([][]byte, int(b.keyLen))
+		values             = make([][]byte, int(b.keyLen))
+		isPessimisticLocks = make([]bool, int(b.keyLen))
+		start              = 0
+		wg                 sync.WaitGroup
 	)
-	for _, txn := range b.txns {
-		mutation = txn.committer.GetMutations()
-		sizeHint += mutation.Len()
-	}
-	mutations = NewPlainMutations(sizeHint)
-	for _, txn := range b.txns {
-		mutation = txn.committer.GetMutations()
-		var (
-			op    pb.Op
-			key   []byte
-			value []byte
-		)
-		for i := 0; i < mutation.Len(); i++ {
-			op = mutation.GetOp(i)
-			// ignore lock
-			if op == pb.Op_Lock {
-				continue
-			}
-			key = mutation.GetKey(i)
-			value = mutation.GetValue(i)
 
-			mutations.Push(op, key, value, false)
-		}
+	wg.Add(len(b.txns))
+	for _, txn := range b.txns {
+		mutation := txn.committer.GetMutations()
+		go func(mutation *memBufferMutations, start int) {
+			for i := 0; i < mutation.Len(); i++ {
+				ops[start+i] = mutation.GetOp(i)
+				keys[start+i] = mutation.GetKey(i)
+				values[start+i] = mutation.GetValue(i)
+			}
+			wg.Done()
+		}(mutation, start)
+		start += mutation.Len()
 	}
-	b.mutations = &mutations
+	wg.Wait()
+	b.mutations = &PlainMutations{
+		ops:               ops,
+		keys:              keys,
+		values:            values,
+		isPessimisticLock: isPessimisticLocks,
+	}
+	b.lockMutations = &PlainMutations{keys: keys}
 }
 
 // groupMutations groups mutations by region, then checks for any large groups and in that case pre-splits the region.
@@ -435,7 +439,7 @@ func (b *batchManager) groupMutations(bo *Backoffer, mutations CommitterMutation
 	preSplitDetectThresholdVal := atomic.LoadUint32(&preSplitDetectThreshold)
 	for _, group := range groups {
 		if uint32(group.mutations.Len()) >= preSplitDetectThresholdVal {
-			logutil.BgLogger().Info("2PC detect large amount of mutations on a single region",
+			logutil.BgLogger().Info("deterministic detect large amount of mutations on a single region",
 				zap.Uint64("region", group.region.GetID()),
 				zap.Int("mutations count", group.mutations.Len()))
 			// Use context.Background, this time should not add up to Backoffer.
@@ -457,9 +461,12 @@ func (b *batchManager) groupMutations(bo *Backoffer, mutations CommitterMutation
 
 func (b *batchManager) commit() error {
 	b.mergeMutations()
-	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, b.vars)
-	err := b.writeDeterministicGroups(bo, b.mutations)
-
+	//logutil.BgLogger().Info("MYLOG write locks")
+	bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, b.vars)
+	err := b.lockDeterministicGroups(bo, b.lockMutations)
+	//logutil.BgLogger().Info("MYLOG start commit")
+	bo = NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, b.vars)
+	err = b.writeDeterministicGroups(bo, b.mutations)
 	return err
 }
 
@@ -504,10 +511,10 @@ func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, bat
 	}, pb.Context{Priority: pb.CommandPri_High, SyncLog: false})
 
 	for {
-		//logutil.BgLogger().Info("MYLOG, send write req")
+		//logutil.BgLogger().Info("MYLOG, send commit write req", zap.String("mutations", fmt.Sprintln(mutations)))
 		sender := NewRegionRequestSender(b.store.regionCache, b.store.client)
 		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
-		//logutil.BgLogger().Info("MYLOG, got write res", zap.Error(err))
+		//logutil.BgLogger().Info("MYLOG, got commit write res", zap.Error(err))
 
 		if err != nil {
 			return errors.Trace(err)
@@ -524,7 +531,11 @@ func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, bat
 				return errors.Trace(err)
 			}
 			err = b.writeDeterministicGroups(bo, batch.mutations)
-			return errors.Trace(err)
+			if err == nil {
+				break
+			} else {
+				return errors.Trace(err)
+			}
 		}
 		if resp.Resp == nil {
 			//logutil.BgLogger().Info("MYLOG, body missing")
@@ -544,6 +555,98 @@ func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, bat
 		break
 	}
 
+	wg.Done()
+	return nil
+}
+
+func (b *batchManager) lockDeterministicGroups(bo *Backoffer, mutations CommitterMutations) error {
+	var (
+		groups  []groupedMutations
+		groupWg sync.WaitGroup
+		err     error
+	)
+	groups, err = b.groupMutations(bo, mutations)
+	if err != nil {
+		return err
+	}
+
+	groupWg.Add(len(groups))
+	for _, group := range groups {
+		go func(group groupedMutations) {
+			writeBo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, b.vars)
+			b.lockDeterministic(writeBo, &groupWg, group)
+		}(group)
+	}
+	groupWg.Wait()
+
+	return nil
+}
+
+func (b *batchManager) lockDeterministic(bo *Backoffer, wg *sync.WaitGroup, batch groupedMutations) error {
+	mutations := make([]*pb.Mutation, batch.mutations.Len())
+	for i := 0; i < batch.mutations.Len(); i++ {
+		mutations[i] = &pb.Mutation{
+			Op:  pb.Op_PessimisticLock,
+			Key: batch.mutations.GetKey(i),
+		}
+	}
+	//logutil.BgLogger().Info("MYLOG, write req mutation", zap.String("mutation", fmt.Sprintln(mutations)))
+	req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticLock, &pb.PessimisticLockRequest{
+		Mutations:    mutations,
+		PrimaryLock:  mutations[0].GetKey(),
+		StartVersion: b.startTS,
+		LockTtl:      atomic.LoadUint64(&ManagedLockTTL),
+		WaitTimeout:  0,
+		ReturnValues: false,
+		MinCommitTs:  1,
+	}, pb.Context{Priority: pb.CommandPri_High, SyncLog: false})
+
+	for {
+		//logutil.BgLogger().Info("MYLOG, send lock write req", zap.String("mutations", fmt.Sprintln(mutations)))
+		sender := NewRegionRequestSender(b.store.regionCache, b.store.client)
+		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
+		//logutil.BgLogger().Info("MYLOG, got lock write res", zap.Error(err))
+
+		if err != nil {
+			return errors.Trace(err)
+		}
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			//logutil.BgLogger().Info("MYLOG, lock get region error failed res", zap.Error(err))
+			return errors.Trace(err)
+		}
+		if regionErr != nil {
+			//logutil.BgLogger().Info("MYLOG, lock get region error and restart", zap.String("region err", regionErr.String()))
+			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = b.lockDeterministicGroups(bo, batch.mutations)
+			if err == nil {
+				break
+			} else {
+				logutil.BgLogger().Info("MYLOG, lock get region error retry result", zap.Error(err))
+			}
+		}
+		if resp.Resp == nil {
+			//logutil.BgLogger().Info("MYLOG, body missing")
+			return errors.Trace(ErrBodyMissing)
+		}
+
+		if writeResponse, ok := resp.Resp.(*pb.PessimisticLockResponse); ok {
+			errs := writeResponse.GetErrors()
+			if len(errs) == 0 {
+				//logutil.BgLogger().Info("MYLOG, resp got no err")
+			} else {
+				for _, err := range errs {
+					logutil.BgLogger().Info("MYLOG, resp err", zap.Stringer("err", err))
+				}
+			}
+		}
+		break
+	}
+
+	//logutil.BgLogger().Info("MYLOG, lock done")
 	wg.Done()
 	return nil
 }
