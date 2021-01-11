@@ -250,7 +250,7 @@ func (b *batchManager) detectConflicts() {
 	wg.Wait()
 
 	wg.Add(int(b.txnCount))
-	for i := tID - 1; i > 0; i-- {
+	for i := tID - 1; i >= 0; i-- {
 		go func(i int) {
 			var (
 				signature txnSignature
