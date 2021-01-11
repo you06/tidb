@@ -74,7 +74,7 @@ type batchManager struct {
 	prevTxns      map[uint32]*tikvTxn
 	txns          map[uint32]*tikvTxn
 	conflictTxns  map[uint32]struct{}
-	thisBatch     map[uint64]struct{}
+	//thisBatch     map[uint64]struct{}
 }
 
 func newBatchManager(store *tikvStore) (*batchManager, error) {
@@ -85,7 +85,7 @@ func newBatchManager(store *tikvStore) (*batchManager, error) {
 		vars:         kv.DefaultVars,
 		commitErrs:   make(map[uint64]error),
 		conflictTxns: make(map[uint32]struct{}),
-		thisBatch:    make(map[uint64]struct{}),
+		//thisBatch:    make(map[uint64]struct{}),
 	}
 	bm.freeReady = sync.NewCond(&bm.freeMutex)
 	bm.startReady = sync.NewCond(&bm.startMutex)
@@ -102,21 +102,14 @@ WAIT:
 	for atomic.LoadUint32(&b.state)&batchStateCanNext == 0 {
 		b.freeReady.Wait()
 	}
-	b.freeMutex.Unlock()
-
-	b.mu.Lock()
 	if b.txnCount == 0 {
 		b.futureCount++
-		_, ok := b.thisBatch[connID]
-		if ok {
-			logutil.Logger(ctx).Info("MYLOG double call NextBatch", zap.Stack("trace"))
-		}
-		b.thisBatch[connID] = struct{}{}
 	} else {
-		b.mu.Unlock()
+		b.freeMutex.Unlock()
 		goto WAIT
 	}
-	b.mu.Unlock()
+	b.freeMutex.Unlock()
+
 	//atomic.AddUint32(&b.futureCount, 1)
 	if atomic.LoadUint32(&b.state) == batchStateFree {
 		//b.state = batchStateExecuting
@@ -147,7 +140,7 @@ func (b *batchManager) Clear() {
 	b.state = batchStateFree
 	b.txns = make(map[uint32]*tikvTxn)
 	b.conflictTxns = make(map[uint32]struct{})
-	b.thisBatch = make(map[uint64]struct{})
+	//b.thisBatch = make(map[uint64]struct{})
 	atomic.StoreUint32(&b.state, batchStateFree)
 }
 
@@ -401,13 +394,15 @@ func (b *batchManager) writeCheckpointStart() {
 	b.startTS, b.startErr = b.store.getTimestampWithRetry(bo, oracle.GlobalTxnScope)
 	b.commitTS = b.startTS + 1
 
-	b.mu.Lock()
+	b.freeMutex.Lock()
 	atomic.StoreUint32(&b.state, batchStateExecuting)
 	b.txnCount = b.futureCount
-	b.mu.Unlock()
 	b.startReady.Broadcast()
+	b.freeMutex.Unlock()
 
-	logutil.BgLogger().Info("MYLOG got startTS", zap.Uint64("startTS", b.startTS))
+	logutil.BgLogger().Info("MYLOG got startTS",
+		zap.Uint64("startTS", b.startTS),
+		zap.Uint32("txnCount", b.txnCount))
 }
 
 func (b *batchManager) writeCheckpointCommit() error {
