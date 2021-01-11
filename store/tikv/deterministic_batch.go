@@ -149,7 +149,6 @@ func (b *batchManager) Clear() {
 	b.conflictTxns = make(map[uint32]struct{})
 	b.thisBatch = make(map[uint64]struct{})
 	atomic.StoreUint32(&b.state, batchStateFree)
-	b.freeReady.Broadcast()
 }
 
 func (b *batchManager) removeTxn(txn *tikvTxn) {
@@ -337,11 +336,12 @@ func (b *batchManager) detectConflicts() {
 	)
 	err = b.commit()
 	if err != nil {
-		//logutil.BgLogger().Info("MYLOG check commit err", zap.Error(err))
+		logutil.BgLogger().Info("MYLOG check commit err", zap.Error(err))
 		b.errMutex.Lock()
 		b.commitErrs[commitTS] = err
 		b.errMutex.Unlock()
 	}
+	b.freeReady.Broadcast()
 }
 
 func (b *batchManager) hasConflict(txn *tikvTxn) bool {
@@ -503,6 +503,7 @@ func (b *batchManager) writeDeterministicGroups(bo *Backoffer, mutations Committ
 	)
 	groups, err = b.groupMutations(bo, mutations)
 	if err != nil {
+		logutil.BgLogger().Info("MYLOG group mutations fail", zap.Error(err))
 		return err
 	}
 
@@ -510,13 +511,15 @@ func (b *batchManager) writeDeterministicGroups(bo *Backoffer, mutations Committ
 	for _, group := range groups {
 		go func(group groupedMutations) {
 			writeBo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, b.vars)
-			b.writeDeterministic(writeBo, &groupWg, group)
+			err := b.writeDeterministic(writeBo, &groupWg, group)
+			if err != nil {
+				logutil.BgLogger().Info("MYLOG group write fail", zap.Error(err))
+			}
 		}(group)
 	}
 	groupWg.Wait()
 
-	b.writeCheckpointCommit()
-	return nil
+	return b.writeCheckpointCommit()
 }
 
 func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, batch groupedMutations) error {
