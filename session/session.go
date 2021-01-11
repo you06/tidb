@@ -2434,7 +2434,7 @@ func (s *session) PrepareTSFuture(ctx context.Context, canDeterministic bool) {
 		sessionVars := s.GetSessionVars()
 		if sessionVars.ConnectionID > 0 && sessionVars.EnableDeterministic && canDeterministic {
 			future = &txnFuture{
-				future:   s.store.GetBatchManager().NextBatch(ctx),
+				future:   s.store.GetBatchManager().NextBatch(ctx, sessionVars.ConnectionID),
 				store:    s.store,
 				txnScope: s.sessionVars.CheckAndGetTxnScope(),
 			}

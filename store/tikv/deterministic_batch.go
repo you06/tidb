@@ -74,6 +74,7 @@ type batchManager struct {
 	prevTxns      map[uint32]*tikvTxn
 	txns          map[uint32]*tikvTxn
 	conflictTxns  map[uint32]struct{}
+	thisBatch     map[uint64]struct{}
 }
 
 func newBatchManager(store *tikvStore) (*batchManager, error) {
@@ -84,6 +85,7 @@ func newBatchManager(store *tikvStore) (*batchManager, error) {
 		vars:         kv.DefaultVars,
 		commitErrs:   make(map[uint64]error),
 		conflictTxns: make(map[uint32]struct{}),
+		thisBatch:    make(map[uint64]struct{}),
 	}
 	bm.freeReady = sync.NewCond(&bm.freeMutex)
 	bm.startReady = sync.NewCond(&bm.startMutex)
@@ -93,7 +95,7 @@ func newBatchManager(store *tikvStore) (*batchManager, error) {
 }
 
 // NextBatch return next batch's startTS when it's ready
-func (b *batchManager) NextBatch(ctx context.Context) oracle.Future {
+func (b *batchManager) NextBatch(ctx context.Context, connID uint64) oracle.Future {
 	//logutil.Logger(ctx).Info("MYLOG call NextBatch", zap.Stack("trace"))
 WAIT:
 	b.freeMutex.Lock()
@@ -105,6 +107,11 @@ WAIT:
 	b.mu.Lock()
 	if b.txnCount == 0 {
 		b.futureCount++
+		_, ok := b.thisBatch[connID]
+		if ok {
+			logutil.Logger(ctx).Info("MYLOG double call NextBatch", zap.Stack("trace"))
+		}
+		b.thisBatch[connID] = struct{}{}
 	} else {
 		b.mu.Unlock()
 		goto WAIT
@@ -140,6 +147,7 @@ func (b *batchManager) Clear() {
 	b.state = batchStateFree
 	b.txns = make(map[uint32]*tikvTxn)
 	b.conflictTxns = make(map[uint32]struct{})
+	b.thisBatch = make(map[uint64]struct{})
 	atomic.StoreUint32(&b.state, batchStateFree)
 	b.freeReady.Broadcast()
 }

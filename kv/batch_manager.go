@@ -7,5 +7,5 @@ import (
 )
 
 type BatchManager interface {
-	NextBatch(ctx context.Context) oracle.Future
+	NextBatch(ctx context.Context, connID uint64) oracle.Future
 }
