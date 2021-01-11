@@ -129,9 +129,9 @@ WAIT:
 }
 
 func (b *batchManager) Clear() {
-	//logutil.BgLogger().Info("MYLOG wait clear ready", zap.Uint64("start ts", b.startTS))
+	logutil.BgLogger().Info("MYLOG wait clear ready", zap.Uint64("start ts", b.startTS))
 	b.clearReady.Wait()
-	//logutil.BgLogger().Info("MYLOG wait clear ready done", zap.Uint64("start ts", b.startTS))
+	logutil.BgLogger().Info("MYLOG wait clear ready done", zap.Uint64("start ts", b.startTS))
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.futureCount = 0
@@ -340,7 +340,10 @@ func (b *batchManager) detectConflicts() {
 		b.errMutex.Lock()
 		b.commitErrs[commitTS] = err
 		b.errMutex.Unlock()
+	} else {
+		logutil.BgLogger().Info("MYLOG check commit no err")
 	}
+	b.Clear()
 	b.freeReady.Broadcast()
 }
 
@@ -405,12 +408,10 @@ func (b *batchManager) writeCheckpointStart() {
 }
 
 func (b *batchManager) writeCheckpointCommit() error {
-	b.Clear()
 	return nil
 }
 
 func (b *batchManager) writeCheckpointRollback() error {
-	b.Clear()
 	return nil
 }
 
@@ -519,7 +520,7 @@ func (b *batchManager) writeDeterministicGroups(bo *Backoffer, mutations Committ
 	}
 	groupWg.Wait()
 
-	return b.writeCheckpointCommit()
+	return nil
 }
 
 func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, batch groupedMutations) error {
@@ -540,6 +541,7 @@ func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, bat
 
 	for {
 		//logutil.BgLogger().Info("MYLOG, send commit write req", zap.String("mutations", fmt.Sprintln(mutations)))
+		logutil.BgLogger().Info("MYLOG, send commit write req")
 		sender := NewRegionRequestSender(b.store.regionCache, b.store.client)
 		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
 		//logutil.BgLogger().Info("MYLOG, got commit write res", zap.Error(err))
