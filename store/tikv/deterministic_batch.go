@@ -397,8 +397,11 @@ func (b *batchManager) writeCheckpointStart() {
 	b.freeMutex.Lock()
 	atomic.StoreUint32(&b.state, batchStateExecuting)
 	b.txnCount = b.futureCount
-	b.startReady.Broadcast()
 	b.freeMutex.Unlock()
+
+	b.startMutex.Lock()
+	b.startReady.Broadcast()
+	b.startMutex.Unlock()
 
 	logutil.BgLogger().Info("MYLOG got startTS",
 		zap.Uint64("startTS", b.startTS),
