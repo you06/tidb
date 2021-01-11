@@ -166,11 +166,11 @@ func (b *batchManager) removeTxnReady(txn *tikvTxn) {
 	//delete(b.txns, txn.snapshot.replicaReadSeed)
 	b.txnCount--
 	if b.readyCount == b.txnCount {
-		logutil.BgLogger().Info("MYLOG trigger detectConflicts remove",
-			zap.Uint32("txn", txn.snapshot.replicaReadSeed),
-			zap.Uint64("startTS", b.startTS),
-			zap.Uint32("txnCount", b.txnCount),
-			zap.Uint32("futureCount", b.futureCount))
+		//logutil.BgLogger().Info("MYLOG trigger detectConflicts remove",
+		//	zap.Uint32("txn", txn.snapshot.replicaReadSeed),
+		//	zap.Uint64("startTS", b.startTS),
+		//	zap.Uint32("txnCount", b.txnCount),
+		//	zap.Uint32("futureCount", b.futureCount))
 		b.clearReady.Add(int(b.txnCount))
 		go b.detectConflicts()
 	}
@@ -183,7 +183,7 @@ func (b *batchManager) mutationReady(txn *tikvTxn) {
 	b.readyCount++
 	//logutil.BgLogger().Info("MYLOG call mutation ready", zap.Uint64("startTS", txn.startTS))
 	if b.readyCount == b.txnCount {
-		logutil.BgLogger().Info("MYLOG add clear ready", zap.Int("cnt", int(b.txnCount)), zap.Uint64("startTS", b.startTS))
+		//logutil.BgLogger().Info("MYLOG add clear ready", zap.Int("cnt", int(b.txnCount)), zap.Uint64("startTS", b.startTS))
 		b.clearReady.Add(int(b.txnCount))
 		go b.detectConflicts()
 	}
@@ -246,13 +246,11 @@ func (b *batchManager) detectConflicts() {
 		}(tID, txn)
 		tID++
 	}
-	//logutil.BgLogger().Info("MYLOG detect conflict, p0.5", zap.Int("tID", tID), zap.Uint32("txnCount", b.txnCount))
+	logutil.BgLogger().Info("MYLOG detect conflict", zap.Int("txns", tID), zap.Uint32("txnCount", b.txnCount))
 	wg.Wait()
 
-	//logutil.BgLogger().Info("MYLOG detect conflict, p1")
-
 	wg.Add(int(b.txnCount))
-	for i := 0; i < tID; i++ {
+	for i := tID - 1; i > 0; i-- {
 		go func(i int) {
 			var (
 				signature txnSignature
@@ -404,8 +402,7 @@ func (b *batchManager) writeCheckpointStart() {
 	b.startMutex.Unlock()
 
 	logutil.BgLogger().Info("MYLOG got startTS",
-		zap.Uint64("startTS", b.startTS),
-		zap.Uint32("txnCount", b.txnCount))
+		zap.Uint64("startTS", b.startTS))
 }
 
 func (b *batchManager) writeCheckpointCommit() error {
@@ -542,7 +539,7 @@ func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, bat
 
 	for {
 		//logutil.BgLogger().Info("MYLOG, send commit write req", zap.String("mutations", fmt.Sprintln(mutations)))
-		logutil.BgLogger().Info("MYLOG, send commit write req")
+		//logutil.BgLogger().Info("MYLOG, send commit write req")
 		sender := NewRegionRequestSender(b.store.regionCache, b.store.client)
 		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
 		//logutil.BgLogger().Info("MYLOG, got commit write res", zap.Error(err))
@@ -576,6 +573,7 @@ func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, bat
 		if writeResponse, ok := resp.Resp.(*pb.DeterministicWriteResponse); ok {
 			errs := writeResponse.GetErrors()
 			if len(errs) == 0 {
+				break
 				//logutil.BgLogger().Info("MYLOG, resp got no err")
 			} else {
 				for _, err := range errs {
@@ -668,6 +666,7 @@ func (b *batchManager) lockDeterministic(bo *Backoffer, wg *sync.WaitGroup, batc
 		if writeResponse, ok := resp.Resp.(*pb.PessimisticLockResponse); ok {
 			errs := writeResponse.GetErrors()
 			if len(errs) == 0 {
+				break
 				//logutil.BgLogger().Info("MYLOG, resp got no err")
 			} else {
 				for _, err := range errs {
