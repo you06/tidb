@@ -327,8 +327,11 @@ func (b *batchManager) detectConflicts() {
 	wg.Wait()
 	//logutil.BgLogger().Info("MYLOG detect conflict done")
 
+	b.detectMutex.Lock()
 	atomic.StoreUint32(&b.state, batchStateCommitting)
 	b.detectCond.Broadcast()
+	b.detectMutex.Unlock()
+
 	//b.commitDone.Add(len(b.txns) - 1)
 	var (
 		commitTS = b.commitTS
