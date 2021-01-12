@@ -137,7 +137,6 @@ func (b *batchManager) Clear() {
 	b.startErr = nil
 	//b.commitErr = nil
 	b.prevTxns = b.txns
-	b.state = batchStateFree
 	b.txns = make(map[uint32]*tikvTxn)
 	b.conflictTxns = make(map[uint32]struct{})
 	//b.thisBatch = make(map[uint64]struct{})
@@ -343,8 +342,18 @@ func (b *batchManager) detectConflicts() {
 
 func (b *batchManager) hasConflict(txn *tikvTxn) bool {
 	b.detectMutex.Lock()
-	for atomic.LoadUint32(&b.state) < batchStateCommitting {
-		b.detectCond.Wait()
+	state := atomic.LoadUint32(&b.state)
+	for state < batchStateCommitting {
+		switch state {
+		case batchStateFree:
+			b.detectCond.Wait()
+		case batchStateStarting:
+			b.detectCond.Wait()
+		case batchStateExecuting:
+			b.detectCond.Wait()
+		case batchStateDetecting:
+			b.detectCond.Wait()
+		}
 	}
 	b.detectMutex.Unlock()
 	b.conflictMu.Lock()
