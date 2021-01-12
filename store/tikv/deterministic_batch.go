@@ -122,7 +122,7 @@ WAIT:
 }
 
 func (b *batchManager) Clear() {
-	logutil.BgLogger().Info("MYLOG wait clear ready", zap.Uint64("start ts", b.startTS))
+	//logutil.BgLogger().Info("MYLOG wait clear ready", zap.Uint64("start ts", b.startTS))
 	b.clearReady.Wait()
 	logutil.BgLogger().Info("MYLOG wait clear ready done", zap.Uint64("start ts", b.startTS))
 	b.mu.Lock()
@@ -245,7 +245,7 @@ func (b *batchManager) detectConflicts() {
 		}(tID, txn)
 		tID++
 	}
-	logutil.BgLogger().Info("MYLOG detect conflict", zap.Int("txns", tID), zap.Uint32("txnCount", b.txnCount))
+	//logutil.BgLogger().Info("MYLOG detect conflict", zap.Int("txns", tID), zap.Uint32("txnCount", b.txnCount))
 	wg.Wait()
 
 	wg.Add(int(b.txnCount))
@@ -329,12 +329,12 @@ func (b *batchManager) detectConflicts() {
 	)
 	err = b.commit()
 	if err != nil {
-		logutil.BgLogger().Info("MYLOG check commit err", zap.Error(err))
+		//logutil.BgLogger().Info("MYLOG check commit err", zap.Error(err))
 		b.errMutex.Lock()
 		b.commitErrs[commitTS] = err
 		b.errMutex.Unlock()
 	} else {
-		logutil.BgLogger().Info("MYLOG check commit no err")
+		//logutil.BgLogger().Info("MYLOG check commit no err")
 	}
 	b.Clear()
 	b.freeReady.Broadcast()
@@ -342,18 +342,8 @@ func (b *batchManager) detectConflicts() {
 
 func (b *batchManager) hasConflict(txn *tikvTxn) bool {
 	b.detectMutex.Lock()
-	state := atomic.LoadUint32(&b.state)
-	for state < batchStateCommitting {
-		switch state {
-		case batchStateFree:
-			b.detectCond.Wait()
-		case batchStateStarting:
-			b.detectCond.Wait()
-		case batchStateExecuting:
-			b.detectCond.Wait()
-		case batchStateDetecting:
-			b.detectCond.Wait()
-		}
+	for atomic.LoadUint32(&b.state) < batchStateCommitting {
+		b.detectCond.Wait()
 	}
 	b.detectMutex.Unlock()
 	b.conflictMu.Lock()
@@ -490,13 +480,13 @@ func (b *batchManager) groupMutations(bo *Backoffer, mutations CommitterMutation
 
 func (b *batchManager) commit() error {
 	b.mergeMutations()
-	logutil.BgLogger().Info("MYLOG write locks", zap.Int("txn count", len(b.txns)))
+	//logutil.BgLogger().Info("MYLOG write locks", zap.Int("txn count", len(b.txns)))
 	bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, b.vars)
 	err := b.lockDeterministicGroups(bo, b.lockMutations)
 	if err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("MYLOG start commit")
+	//logutil.BgLogger().Info("MYLOG start commit")
 	bo = NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, b.vars)
 	err = b.writeDeterministicGroups(bo, b.mutations)
 
