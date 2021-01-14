@@ -75,12 +75,8 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 
 // CanDeterministic
 func CanDeterministic(node ast.Node) bool {
-	switch n := node.(type) {
+	switch node.(type) {
 	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
-		return true
-	// TODO: needs to consider if the prepared plan can deterministic for execute stmt
-	case *ast.ExecuteStmt:
-		logutil.BgLogger().Info("MYLOG execute stmt", zap.String("name", n.Name))
 		return true
 	default:
 		return false
@@ -89,7 +85,7 @@ func CanDeterministic(node ast.Node) bool {
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
-func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
+func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, deterministic bool) (plannercore.Plan, types.NameSlice, error) {
 	sessVars := sctx.GetSessionVars()
 
 	// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
@@ -119,7 +115,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				//		zap.Uint64("conn id", sctx.GetSessionVars().ConnectionID),
 				//		zap.Bool("deterministic", sctx.GetSessionVars().EnableDeterministic))
 				//}
-				sctx.PrepareTSFuture(ctx, CanDeterministic(node))
+				sctx.PrepareTSFuture(ctx, CanDeterministic(node) || deterministic)
 			}
 			return fp, fp.OutputNames(), nil
 		}
@@ -133,7 +129,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	//		zap.Uint64("conn id", sctx.GetSessionVars().ConnectionID),
 	//		zap.Bool("deterministic", sctx.GetSessionVars().EnableDeterministic))
 	//}
-	sctx.PrepareTSFuture(ctx, CanDeterministic(node))
+	sctx.PrepareTSFuture(ctx, CanDeterministic(node) || deterministic)
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
 	stmtHints, warns := handleStmtHints(tableHints)

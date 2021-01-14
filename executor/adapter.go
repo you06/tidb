@@ -181,6 +181,7 @@ type ExecStmt struct {
 	LowerPriority     bool
 	isPreparedStmt    bool
 	isSelectForUpdate bool
+	Deterministic     bool
 	retryCount        uint
 	retryStartTime    time.Time
 
@@ -262,7 +263,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
 		return 0, err
 	}
-	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, is)
+	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, is, false)
 	if err != nil {
 		return 0, err
 	}

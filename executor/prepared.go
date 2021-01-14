@@ -219,6 +219,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		VisitInfos:    destBuilder.GetVisitInfo(),
 		NormalizedSQL: normalized,
 		SQLDigest:     digest,
+		Deterministic: planner.CanDeterministic(stmt),
 	}
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }
@@ -302,7 +303,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	ID uint32, args []types.Datum) (sqlexec.Statement, error) {
+	ID uint32, args []types.Datum, deterministic bool) (sqlexec.Statement, error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
@@ -313,18 +314,19 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	}
 	execStmt.BinaryArgs = args
 	is := infoschema.GetInfoSchema(sctx)
-	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
+	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is, deterministic)
 	if err != nil {
 		return nil, err
 	}
 
 	stmt := &ExecStmt{
-		GoCtx:       ctx,
-		InfoSchema:  is,
-		Plan:        execPlan,
-		StmtNode:    execStmt,
-		Ctx:         sctx,
-		OutputNames: names,
+		GoCtx:         ctx,
+		InfoSchema:    is,
+		Plan:          execPlan,
+		StmtNode:      execStmt,
+		Ctx:           sctx,
+		OutputNames:   names,
+		Deterministic: deterministic,
 	}
 	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
 		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)

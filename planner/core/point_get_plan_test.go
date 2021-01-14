@@ -309,7 +309,7 @@ func (s *testPointGetSuite) TestPointGetId(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
+		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is, false)
 		c.Assert(err, IsNil)
 		// Test explain result is useless, plan id will be reset when running `explain`.
 		c.Assert(p.ID(), Equals, 1)

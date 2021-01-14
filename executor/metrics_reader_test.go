@@ -65,7 +65,7 @@ func (s *testSuite7) TestStmtLabel(c *C) {
 		is := infoschema.GetInfoSchema(tk.Se)
 		err = plannercore.Preprocess(tk.Se.(sessionctx.Context), stmtNode, is)
 		c.Assert(err, IsNil)
-		_, _, err = planner.Optimize(context.TODO(), tk.Se, stmtNode, is)
+		_, _, err = planner.Optimize(context.TODO(), tk.Se, stmtNode, is, false)
 		c.Assert(err, IsNil)
 		c.Assert(executor.GetStmtLabel(stmtNode), Equals, tt.label)
 	}
