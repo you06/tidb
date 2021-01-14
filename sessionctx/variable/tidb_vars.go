@@ -642,7 +642,7 @@ const (
 	DefTiDBAnalyzeVersion               = 1
 	DefTiDBEnableIndexMergeJoin         = false
 	DefTiDBTrackAggregateMemoryUsage    = false
-	DefTiDBEnableDeterministic          = false
+	DefTiDBEnableDeterministic          = true
 )
 
 // Process global variables.

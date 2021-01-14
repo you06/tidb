@@ -75,11 +75,12 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 
 // CanDeterministic
 func CanDeterministic(node ast.Node) bool {
-	switch node.(type) {
+	switch n := node.(type) {
 	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
 		return true
 	// TODO: needs to consider if the prepared plan can deterministic for execute stmt
 	case *ast.ExecuteStmt:
+		logutil.BgLogger().Info("MYLOG execute stmt", zap.String("name", n.Name))
 		return true
 	default:
 		return false
