@@ -691,6 +691,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	label := s.getSQLLabel()
 	for {
 		s.PrepareTxnCtx(ctx)
+		if s.sessionVars.TxnCtx.IsDeterministic {
+			s.txn.changeToInvalid()
+			s.PrepareTSFuture(ctx, true)
+		}
 		s.sessionVars.RetryInfo.ResetOffset()
 		for i, sr := range nh.history {
 			st := sr.st
@@ -1464,7 +1468,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 		resultSet, err = stmt.PointGet(ctx, is)
 		s.txn.changeToInvalid()
 	case *plannercore.Update:
-		s.PrepareTSFuture(ctx, false)
+		s.PrepareTSFuture(ctx, true)
 		stmtCtx.Priority = kv.PriorityHigh
 		resultSet, err = runStmt(ctx, s, stmt)
 	default:
@@ -2419,6 +2423,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 	if s.sessionVars.EnableDeterministic {
 		s.sessionVars.TxnCtx.IsDeterministic = true
 	} else if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
+		s.sessionVars.TxnCtx.IsDeterministic = false
 		if s.sessionVars.TxnMode == ast.Pessimistic {
 			s.sessionVars.TxnCtx.IsPessimistic = true
 		}
