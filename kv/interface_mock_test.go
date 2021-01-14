@@ -160,6 +160,10 @@ func (*mockTxn) IsPessimistic() bool {
 	return false
 }
 
+func (*mockTxn) IsDeterministic() bool {
+	return false
+}
+
 // BeginWithStartTS begins transaction with given txnScope and startTS.
 func (s *mockStorage) BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error) {
 	return s.Begin()

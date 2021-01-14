@@ -425,6 +425,9 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
 	if s.txn.IsReadOnly() {
+		if s.txn.IsDeterministic() {
+			s.txn.RemoveReady()
+		}
 		return nil
 	}
 	err := s.checkPlacementPolicyBeforeCommit()

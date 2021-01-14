@@ -158,7 +158,7 @@ func (b *batchManager) removeTxn(txn *tikvTxn) {
 	//}
 }
 
-func (b *batchManager) removeTxnReady(txn *tikvTxn) {
+func (b *batchManager) removeTxnReady(txn *tikvTxn, ctx context.Context) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	//if _, ok := b.txns[txn.snapshot.replicaReadSeed]; !ok {
@@ -166,7 +166,7 @@ func (b *batchManager) removeTxnReady(txn *tikvTxn) {
 	//}
 	delete(b.txns, txn.snapshot.replicaReadSeed)
 	b.txnCount--
-	logutil.BgLogger().Info("MYLOG call remove ready",
+	logutil.Logger(ctx).Info("MYLOG call remove ready",
 		zap.Uint64("startTS", txn.startTS),
 		zap.Uint32("ready count", b.readyCount),
 		zap.Uint32("txn count", b.txnCount))
@@ -179,12 +179,12 @@ func (b *batchManager) removeTxnReady(txn *tikvTxn) {
 	}
 }
 
-func (b *batchManager) mutationReady(txn *tikvTxn) {
+func (b *batchManager) mutationReady(txn *tikvTxn, ctx context.Context) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.txns[txn.snapshot.replicaReadSeed] = txn
 	b.readyCount++
-	logutil.BgLogger().Info("MYLOG call mutation ready",
+	logutil.Logger(ctx).Info("MYLOG call mutation ready",
 		zap.Uint64("startTS", txn.startTS),
 		zap.Uint32("ready count", b.readyCount),
 		zap.Uint32("txn count", b.txnCount))
@@ -395,8 +395,8 @@ func (b *batchManager) writeCheckpointStart() {
 
 	bo := b.newCheckpointBackOffer()
 
-	time.Sleep(1000 * time.Microsecond)
-	//time.Sleep(time.Second)
+	//time.Sleep(1000 * time.Microsecond)
+	time.Sleep(time.Second)
 	b.startTS, b.startErr = b.store.getTimestampWithRetry(bo, oracle.GlobalTxnScope)
 	b.commitTS = b.startTS + 1
 
