@@ -30,6 +30,9 @@ func (t *mockTxn) Commit(ctx context.Context) error {
 	return ErrTxnRetryable
 }
 
+func (t *mockTxn) RemoveReady() {
+}
+
 func (t *mockTxn) Rollback() error {
 	t.valid = false
 	return nil

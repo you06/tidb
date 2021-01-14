@@ -253,6 +253,12 @@ func (st *TxnState) Commit(ctx context.Context) error {
 	return st.Transaction.Commit(ctx)
 }
 
+func (st *TxnState) RemoveReady() {
+	if st.Transaction != nil {
+		st.Transaction.RemoveReady()
+	}
+}
+
 // Rollback overrides the Transaction interface.
 func (st *TxnState) Rollback() error {
 	defer st.reset()

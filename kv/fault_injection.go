@@ -117,6 +117,10 @@ func (t *InjectedTransaction) Commit(ctx context.Context) error {
 	return t.Transaction.Commit(ctx)
 }
 
+func (t *InjectedTransaction) RemoveReady() {
+
+}
+
 // InjectedSnapshot wraps a Snapshot with injections.
 type InjectedSnapshot struct {
 	Snapshot

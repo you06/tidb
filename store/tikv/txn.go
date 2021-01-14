@@ -343,6 +343,10 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
+func (txn *tikvTxn) RemoveReady() {
+	txn.store.batchManager.removeTxnReady(txn)
+}
+
 func (txn *tikvTxn) close() {
 	txn.valid = false
 }

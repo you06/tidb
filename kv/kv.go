@@ -258,6 +258,8 @@ type Transaction interface {
 	Reset()
 	// Commit commits the transaction operations to KV store.
 	Commit(context.Context) error
+	// RemoveReady
+	RemoveReady()
 	// Rollback undoes the transaction operations to KV store.
 	Rollback() error
 	// String implements fmt.Stringer interface.

@@ -228,7 +228,7 @@ func extractSignature(mutation *memBufferMutations) txnSignature {
 }
 
 func (b *batchManager) detectConflicts() {
-	//logutil.BgLogger().Info("MYLOG detect conflict")
+	logutil.BgLogger().Info("MYLOG detect conflict")
 
 	atomic.StoreUint32(&b.state, batchStateDetecting)
 
