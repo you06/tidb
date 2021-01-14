@@ -104,7 +104,11 @@ WAIT:
 	}
 	if b.txnCount == 0 {
 		b.futureCount++
+		futureVal := atomic.LoadUint32(&b.futureCount)
+		logutil.Logger(ctx).Info("MYLOG add future", zap.Uint32("future", futureVal))
 	} else {
+		futureVal := atomic.LoadUint32(&b.futureCount)
+		logutil.Logger(ctx).Info("MYLOG wait for next", zap.Uint32("future", futureVal))
 		b.freeMutex.Unlock()
 		goto WAIT
 	}
@@ -162,11 +166,10 @@ func (b *batchManager) removeTxnReady(txn *tikvTxn) {
 	//}
 	delete(b.txns, txn.snapshot.replicaReadSeed)
 	b.txnCount--
-	//logutil.BgLogger().Info("MYLOG call remove ready",
-	//	zap.Uint64("startTS", txn.startTS),
-	//	zap.Uint32("ready count", b.readyCount),
-	//	zap.Uint32("txn count", b.txnCount),
-	//	zap.Stack("trace"))
+	logutil.BgLogger().Info("MYLOG call remove ready",
+		zap.Uint64("startTS", txn.startTS),
+		zap.Uint32("ready count", b.readyCount),
+		zap.Uint32("txn count", b.txnCount))
 	if b.readyCount == b.txnCount {
 		//logutil.BgLogger().Info("MYLOG trigger detectConflicts remove",
 		//	zap.Uint64("startTS", b.startTS),
@@ -181,11 +184,10 @@ func (b *batchManager) mutationReady(txn *tikvTxn) {
 	defer b.mu.Unlock()
 	b.txns[txn.snapshot.replicaReadSeed] = txn
 	b.readyCount++
-	//logutil.BgLogger().Info("MYLOG call mutation ready",
-	//	zap.Uint64("startTS", txn.startTS),
-	//	zap.Uint32("ready count", b.readyCount),
-	//	zap.Uint32("txn count", b.txnCount),
-	//	zap.Stack("trace"))
+	logutil.BgLogger().Info("MYLOG call mutation ready",
+		zap.Uint64("startTS", txn.startTS),
+		zap.Uint32("ready count", b.readyCount),
+		zap.Uint32("txn count", b.txnCount))
 	if b.readyCount == b.txnCount {
 		//logutil.BgLogger().Info("MYLOG add clear ready",
 		//	zap.Uint64("startTS", b.startTS),
