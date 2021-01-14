@@ -104,11 +104,7 @@ WAIT:
 	}
 	if b.txnCount == 0 {
 		b.futureCount++
-		futureVal := atomic.LoadUint32(&b.futureCount)
-		logutil.Logger(ctx).Info("MYLOG add future", zap.Uint32("future", futureVal))
 	} else {
-		futureVal := atomic.LoadUint32(&b.futureCount)
-		logutil.Logger(ctx).Info("MYLOG wait for next", zap.Uint32("future", futureVal))
 		b.freeMutex.Unlock()
 		goto WAIT
 	}
@@ -166,10 +162,10 @@ func (b *batchManager) removeTxnReady(txn *tikvTxn, ctx context.Context) {
 	//}
 	delete(b.txns, txn.snapshot.replicaReadSeed)
 	b.txnCount--
-	logutil.Logger(ctx).Info("MYLOG call remove ready",
-		zap.Uint64("startTS", txn.startTS),
-		zap.Uint32("ready count", b.readyCount),
-		zap.Uint32("txn count", b.txnCount))
+	//logutil.Logger(ctx).Info("MYLOG call remove ready",
+	//	zap.Uint64("startTS", txn.startTS),
+	//	zap.Uint32("ready count", b.readyCount),
+	//	zap.Uint32("txn count", b.txnCount))
 	if b.readyCount == b.txnCount {
 		//logutil.BgLogger().Info("MYLOG trigger detectConflicts remove",
 		//	zap.Uint64("startTS", b.startTS),
@@ -184,10 +180,10 @@ func (b *batchManager) mutationReady(txn *tikvTxn, ctx context.Context) {
 	defer b.mu.Unlock()
 	b.txns[txn.snapshot.replicaReadSeed] = txn
 	b.readyCount++
-	logutil.Logger(ctx).Info("MYLOG call mutation ready",
-		zap.Uint64("startTS", txn.startTS),
-		zap.Uint32("ready count", b.readyCount),
-		zap.Uint32("txn count", b.txnCount))
+	//logutil.Logger(ctx).Info("MYLOG call mutation ready",
+	//	zap.Uint64("startTS", txn.startTS),
+	//	zap.Uint32("ready count", b.readyCount),
+	//	zap.Uint32("txn count", b.txnCount))
 	if b.readyCount == b.txnCount {
 		//logutil.BgLogger().Info("MYLOG add clear ready",
 		//	zap.Uint64("startTS", b.startTS),
@@ -358,11 +354,11 @@ func (b *batchManager) hasConflict(txn *tikvTxn) bool {
 	b.conflictMu.Lock()
 	_, ok := b.conflictTxns[txn.snapshot.replicaReadSeed]
 	b.conflictMu.Unlock()
-	logutil.BgLogger().Info("MYLOG call hasConflict",
-		zap.Uint64("startTS", txn.startTS),
-		zap.Uint64("batch startTS", b.startTS),
-		zap.Bool("eq", txn.startTS == b.startTS),
-		zap.Bool("conflict", ok))
+	//logutil.BgLogger().Info("MYLOG call hasConflict",
+	//	zap.Uint64("startTS", txn.startTS),
+	//	zap.Uint64("batch startTS", b.startTS),
+	//	zap.Bool("eq", txn.startTS == b.startTS),
+	//	zap.Bool("conflict", ok))
 
 	b.clearReady.Done()
 	return ok
@@ -395,8 +391,8 @@ func (b *batchManager) writeCheckpointStart() {
 
 	bo := b.newCheckpointBackOffer()
 
-	//time.Sleep(1000 * time.Microsecond)
-	time.Sleep(time.Second)
+	time.Sleep(1000 * time.Microsecond)
+	//time.Sleep(time.Second)
 	b.startTS, b.startErr = b.store.getTimestampWithRetry(bo, oracle.GlobalTxnScope)
 	b.commitTS = b.startTS + 1
 
