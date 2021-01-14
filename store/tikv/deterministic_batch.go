@@ -111,9 +111,7 @@ WAIT:
 	b.freeMutex.Unlock()
 
 	//atomic.AddUint32(&b.futureCount, 1)
-	if atomic.LoadUint32(&b.state) == batchStateFree {
-		//b.state = batchStateExecuting
-		atomic.StoreUint32(&b.state, batchStateStarting)
+	if atomic.CompareAndSwapUint32(&b.state, batchStateFree, batchStateStarting) {
 		// allocate a checkpoint for first txn in a batch
 		go b.writeCheckpointStart()
 	}
