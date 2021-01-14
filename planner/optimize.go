@@ -578,5 +578,7 @@ func setFoundInBinding(sctx sessionctx.Context, opt bool) error {
 }
 
 func init() {
-	plannercore.OptimizeAstNode = Optimize
+	plannercore.OptimizeAstNode = func(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
+		return Optimize(ctx, sctx, node, is, false)
+	}
 }
