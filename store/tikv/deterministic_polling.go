@@ -49,7 +49,7 @@ WAIT:
 	if i == b.index-1 {
 		next = 0
 	} else {
-		next++
+		next = i + 1
 	}
 	if atomic.CompareAndSwapInt32(&b.index, i, next) {
 		goto WAIT
