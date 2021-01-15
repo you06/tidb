@@ -37,7 +37,7 @@ type batchFuture struct {
 func (b *batchFuture) Wait() (uint64, error) {
 	bm := b.bm
 	bm.startMutex.Lock()
-	for atomic.LoadUint32(&bm.state) == batchStateStarting {
+	for atomic.LoadUint32(&bm.state) < batchStateExecuting {
 		bm.startReady.Wait()
 	}
 	bm.startMutex.Unlock()
@@ -46,6 +46,7 @@ func (b *batchFuture) Wait() (uint64, error) {
 
 type batchManager struct {
 	state       uint32
+	waitCount   uint32
 	futureCount uint32
 	txnCount    uint32
 	readyCount  uint32
@@ -74,10 +75,11 @@ type batchManager struct {
 	prevTxns      map[uint32]*tikvTxn
 	txns          map[uint32]*tikvTxn
 	conflictTxns  map[uint32]struct{}
+	polling       *batchManagerPolling
 	//thisBatch     map[uint64]struct{}
 }
 
-func newBatchManager(store *tikvStore) (*batchManager, error) {
+func newBatchManager(store *tikvStore, polling *batchManagerPolling) (*batchManager, error) {
 	bm := batchManager{
 		state:        batchStateFree,
 		store:        store,
@@ -85,7 +87,7 @@ func newBatchManager(store *tikvStore) (*batchManager, error) {
 		vars:         kv.DefaultVars,
 		commitErrs:   make(map[uint64]error),
 		conflictTxns: make(map[uint32]struct{}),
-		//thisBatch:    make(map[uint64]struct{}),
+		polling:      polling,
 	}
 	bm.freeReady = sync.NewCond(&bm.freeMutex)
 	bm.startReady = sync.NewCond(&bm.startMutex)
@@ -97,23 +99,39 @@ func newBatchManager(store *tikvStore) (*batchManager, error) {
 // NextBatch return next batch's startTS when it's ready
 func (b *batchManager) NextBatch(ctx context.Context) oracle.Future {
 	// logutil.Logger(ctx).Info("MYLOG call NextBatch", zap.Stack("trace"))
-	b.freeMutex.Lock()
-	for atomic.LoadUint32(&b.state)&batchStateCanNext == 0 {
-		b.freeReady.Wait()
-	}
-	if b.txnCount == 0 && b.futureCount < DeterministicMaxBatchSize {
-		b.futureCount++
-	} else {
-		b.freeMutex.Unlock()
-		return nil
-	}
-	b.freeMutex.Unlock()
+	// WAIT:
+	// 	b.freeMutex.Lock()
+	// 	// if b.waitCount < DeterministicMaxBatchSize {
+	// 	// 	b.waitCount++
+	// 	// } else {
+	// 	// 	b.freeMutex.Unlock()
+	// 	// 	return nil
+	// 	// }
+	// 	for atomic.LoadUint32(&b.state)&batchStateCanNext == 0 {
+	// 		b.freeReady.Wait()
+	// 	}
+	// 	if b.txnCount == 0 {
+	// 		b.futureCount++
+	// 	} else {
+	// 		b.freeMutex.Unlock()
+	// 		// return nil
+	// 		goto WAIT
+	// 	}
+	// 	b.freeMutex.Unlock()
+	// 	// if b.txnCount == 0 && b.futureCount < DeterministicMaxBatchSize {
+	// 	// 	b.futureCount++
+	// 	// } else {
+	// 	// 	b.freeMutex.Unlock()
+	// 	// 	return nil
+	// 	// }
+	// 	// b.freeMutex.Unlock()
 
-	//atomic.AddUint32(&b.futureCount, 1)
-	if atomic.CompareAndSwapUint32(&b.state, batchStateFree, batchStateStarting) {
-		// allocate a checkpoint for first txn in a batch
-		go b.writeCheckpointStart()
-	}
+	// 	//atomic.AddUint32(&b.futureCount, 1)
+	// 	if atomic.CompareAndSwapUint32(&b.state, batchStateFree, batchStateStarting) {
+	// 		// allocate a checkpoint for first txn in a batch
+	// 		go b.writeCheckpointStart()
+	// 	}
+	b.futureCount++
 
 	return &batchFuture{bm: b}
 }
@@ -122,8 +140,10 @@ func (b *batchManager) Clear() {
 	//logutil.BgLogger().Info("MYLOG wait clear ready", zap.Uint64("start ts", b.startTS))
 	b.clearReady.Wait()
 	logutil.BgLogger().Info("MYLOG wait clear ready done", zap.Uint64("start ts", b.startTS))
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	// b.mu.Lock()
+	// defer b.mu.Unlock()
+	b.polling.DelManager(b.startTS)
+	b.waitCount = 0
 	b.futureCount = 0
 	b.txnCount = 0
 	b.readyCount = 0
@@ -350,9 +370,9 @@ func (b *batchManager) hasConflict(txn *tikvTxn) bool {
 		b.detectCond.Wait()
 	}
 	b.detectMutex.Unlock()
-	b.conflictMu.Lock()
+	// b.conflictMu.Lock()
 	_, ok := b.conflictTxns[txn.snapshot.replicaReadSeed]
-	b.conflictMu.Unlock()
+	// b.conflictMu.Unlock()
 	//logutil.BgLogger().Info("MYLOG call hasConflict",
 	//	zap.Uint64("startTS", txn.startTS),
 	//	zap.Uint64("batch startTS", b.startTS),
@@ -396,6 +416,7 @@ func (b *batchManager) writeCheckpointStart() {
 	b.commitTS = b.startTS + 1
 
 	b.freeMutex.Lock()
+	b.polling.SetManager(b.startTS, b)
 	atomic.StoreUint32(&b.state, batchStateExecuting)
 	b.txnCount = b.futureCount
 	b.freeMutex.Unlock()
