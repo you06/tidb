@@ -52,7 +52,7 @@ type batchManager struct {
 	readyCount  uint32
 	startTS     uint64
 	commitTS    uint64
-	keyLen      uint64
+	keyLen      int
 
 	mu            sync.Mutex
 	conflictMu    sync.Mutex
@@ -214,38 +214,6 @@ func (b *batchManager) mutationReady(txn *tikvTxn) {
 	}
 }
 
-// txnSignature is used for checking whether a key is in this txn's mutation
-type txnSignature struct {
-	sync.RWMutex
-	conflict bool
-	// TODO: use a bloom filter for large txn
-	bytes  []byte
-	keyMap map[string]struct{}
-}
-
-const keyHintSize = 20
-
-func extractSignature(mutation *memBufferMutations) txnSignature {
-	bytes := make([]byte, 0, keyHintSize)
-	keyMap := make(map[string]struct{})
-	keys := mutation.GetKeys()
-	for _, key := range keys {
-		keyMap[hex.EncodeToString(key)] = struct{}{}
-		for i, b := range key {
-			if i == len(bytes) {
-				bytes = append(bytes, b)
-			} else {
-				bytes[i] |= b
-			}
-		}
-	}
-	return txnSignature{
-		conflict: false,
-		bytes:    bytes,
-		keyMap:   keyMap,
-	}
-}
-
 func (b *batchManager) detectConflicts() {
 	atomic.StoreUint32(&b.state, batchStateDetecting)
 	// detection
@@ -258,6 +226,7 @@ func (b *batchManager) detectConflicts() {
 		txn       *tikvTxn
 		mutation  *memBufferMutations
 		keys      [][]byte
+		keyLen    int
 	)
 	tID := 0
 	for txn := range b.txns {
@@ -283,136 +252,14 @@ func (b *batchManager) detectConflicts() {
 		if conflict {
 			delete(b.txns, txn)
 		} else {
+			keyLen += len(keys)
 			for _, key := range keys {
 				noConflicts[hex.EncodeToString(key)] = txn
 			}
 		}
 	}
+	b.keyLen = keyLen
 	b.noConflicts = noConflicts
-
-	b.detectMutex.Lock()
-	atomic.StoreUint32(&b.state, batchStateCommitting)
-	b.detectCond.Broadcast()
-	b.detectMutex.Unlock()
-
-	//b.commitDone.Add(len(b.txns) - 1)
-	var (
-		commitTS = b.commitTS
-		err      error
-	)
-	err = b.commit()
-	if err != nil {
-		//logutil.BgLogger().Info("MYLOG check commit err", zap.Error(err))
-		b.errMutex.Lock()
-		b.commitErrs[commitTS] = err
-		b.errMutex.Unlock()
-	} else {
-		//logutil.BgLogger().Info("MYLOG check commit no err")
-	}
-	b.Clear()
-	b.freeReady.Broadcast()
-}
-
-func (b *batchManager) detectConflicts1() {
-	// logutil.BgLogger().Info("MYLOG detect conflict",
-	// 	zap.Int("round", b.round))
-
-	atomic.StoreUint32(&b.state, batchStateDetecting)
-
-	// detection
-	var (
-		txnSignatures = make([]txnSignature, b.txnCount)
-		txns          = make([]*tikvTxn, b.txnCount)
-		mutations     = make([]*memBufferMutations, b.txnCount)
-		//conflictTxns  = make([]*tikvTxn, 0, b.txnCount)
-		wg sync.WaitGroup
-	)
-	wg.Add(int(b.txnCount))
-	tID := 0
-	for txn := range b.txns {
-		go func(tID int, txn *tikvTxn) {
-			mutation := txn.committer.GetMutations()
-			txns[tID] = txn
-			mutations[tID] = mutation
-			txnSignatures[tID] = extractSignature(mutation)
-			wg.Done()
-		}(tID, txn)
-		tID++
-	}
-	// logutil.BgLogger().Info("MYLOG detect conflict",
-	// 	zap.Int("round", b.round),
-	// 	zap.Int("txns", tID),
-	// 	zap.Uint32("txnCount", b.txnCount))
-	wg.Wait()
-
-	wg.Add(int(b.txnCount))
-	for i := tID - 1; i >= 0; i-- {
-		go func(i int) {
-			var (
-				signature txnSignature
-				keyStr    string
-				ok        bool
-				conflict  = false
-			)
-			mutation := mutations[i]
-			keys := mutation.GetKeys()
-		TXN:
-			for j := 0; j < i; j++ {
-				signature = txnSignatures[j]
-				signature.RLock()
-				ok = signature.conflict
-				signature.RUnlock()
-				if ok {
-					continue
-				}
-			KEY:
-				for _, key := range keys {
-					//logutil.BgLogger().Info("MYLOG loop keys",
-					//	zap.Int("txn", i),
-					//	zap.ByteString("signature", signature.bytes),
-					//	zap.ByteString("key", key))
-					if len(key) > len(signature.bytes) {
-						continue
-					}
-					for k := 0; k < len(key); k++ {
-						if (signature.bytes[k] & key[k]) != key[k] {
-							continue KEY
-						}
-					}
-					keyStr = hex.EncodeToString(key)
-					signature.Lock()
-					_, ok = signature.keyMap[keyStr]
-					//logutil.BgLogger().Info("MYLOG loop keys p1",
-					//	zap.Int("txn", i),
-					//	zap.ByteString("key", key),
-					//	zap.Bool("ok", ok))
-					signature.Unlock()
-					if ok {
-						signature = txnSignatures[i]
-						signature.Lock()
-						signature.conflict = true
-						signature.Unlock()
-						conflict = true
-						break TXN
-					}
-				}
-			}
-
-			if conflict {
-				b.mu.Lock()
-				delete(b.txns, txns[i])
-				b.mu.Unlock()
-				b.conflictMu.Lock()
-				b.conflictTxns[txns[i]] = struct{}{}
-				b.conflictMu.Unlock()
-			} else {
-				atomic.AddUint64(&b.keyLen, uint64(mutation.Len()))
-			}
-			wg.Done()
-		}(i)
-	}
-	wg.Wait()
-	logutil.BgLogger().Info("MYLOG detect conflict done")
 
 	b.detectMutex.Lock()
 	atomic.StoreUint32(&b.state, batchStateCommitting)
@@ -513,10 +360,10 @@ func (b *batchManager) writeCheckpointRollback() error {
 
 func (b *batchManager) mergeMutations() {
 	var (
-		ops                = make([]pb.Op, int(b.keyLen))
-		keys               = make([][]byte, int(b.keyLen))
-		values             = make([][]byte, int(b.keyLen))
-		isPessimisticLocks = make([]bool, int(b.keyLen))
+		ops                = make([]pb.Op, b.keyLen)
+		keys               = make([][]byte, b.keyLen)
+		values             = make([][]byte, b.keyLen)
+		isPessimisticLocks = make([]bool, b.keyLen)
 		start              = 0
 		wg                 sync.WaitGroup
 	)
@@ -777,4 +624,162 @@ func (b *batchManager) lockDeterministic(bo *Backoffer, wg *sync.WaitGroup, batc
 
 	wg.Done()
 	return nil
+}
+
+// archive code
+
+// txnSignature is used for checking whether a key is in this txn's mutation
+type txnSignature struct {
+	sync.RWMutex
+	conflict bool
+	// TODO: use a bloom filter for large txn
+	bytes  []byte
+	keyMap map[string]struct{}
+}
+
+const keyHintSize = 20
+
+func extractSignature(mutation *memBufferMutations) txnSignature {
+	bytes := make([]byte, 0, keyHintSize)
+	keyMap := make(map[string]struct{})
+	keys := mutation.GetKeys()
+	for _, key := range keys {
+		keyMap[hex.EncodeToString(key)] = struct{}{}
+		for i, b := range key {
+			if i == len(bytes) {
+				bytes = append(bytes, b)
+			} else {
+				bytes[i] |= b
+			}
+		}
+	}
+	return txnSignature{
+		conflict: false,
+		bytes:    bytes,
+		keyMap:   keyMap,
+	}
+}
+
+func (b *batchManager) detectConflicts1() {
+	// logutil.BgLogger().Info("MYLOG detect conflict",
+	// 	zap.Int("round", b.round))
+
+	atomic.StoreUint32(&b.state, batchStateDetecting)
+
+	// detection
+	var (
+		txnSignatures = make([]txnSignature, b.txnCount)
+		txns          = make([]*tikvTxn, b.txnCount)
+		mutations     = make([]*memBufferMutations, b.txnCount)
+		//conflictTxns  = make([]*tikvTxn, 0, b.txnCount)
+		wg sync.WaitGroup
+	)
+	wg.Add(int(b.txnCount))
+	tID := 0
+	for txn := range b.txns {
+		go func(tID int, txn *tikvTxn) {
+			mutation := txn.committer.GetMutations()
+			txns[tID] = txn
+			mutations[tID] = mutation
+			txnSignatures[tID] = extractSignature(mutation)
+			wg.Done()
+		}(tID, txn)
+		tID++
+	}
+	// logutil.BgLogger().Info("MYLOG detect conflict",
+	// 	zap.Int("round", b.round),
+	// 	zap.Int("txns", tID),
+	// 	zap.Uint32("txnCount", b.txnCount))
+	wg.Wait()
+
+	wg.Add(int(b.txnCount))
+	for i := tID - 1; i >= 0; i-- {
+		go func(i int) {
+			var (
+				signature txnSignature
+				keyStr    string
+				ok        bool
+				conflict  = false
+			)
+			mutation := mutations[i]
+			keys := mutation.GetKeys()
+		TXN:
+			for j := 0; j < i; j++ {
+				signature = txnSignatures[j]
+				signature.RLock()
+				ok = signature.conflict
+				signature.RUnlock()
+				if ok {
+					continue
+				}
+			KEY:
+				for _, key := range keys {
+					//logutil.BgLogger().Info("MYLOG loop keys",
+					//	zap.Int("txn", i),
+					//	zap.ByteString("signature", signature.bytes),
+					//	zap.ByteString("key", key))
+					if len(key) > len(signature.bytes) {
+						continue
+					}
+					for k := 0; k < len(key); k++ {
+						if (signature.bytes[k] & key[k]) != key[k] {
+							continue KEY
+						}
+					}
+					keyStr = hex.EncodeToString(key)
+					signature.Lock()
+					_, ok = signature.keyMap[keyStr]
+					//logutil.BgLogger().Info("MYLOG loop keys p1",
+					//	zap.Int("txn", i),
+					//	zap.ByteString("key", key),
+					//	zap.Bool("ok", ok))
+					signature.Unlock()
+					if ok {
+						signature = txnSignatures[i]
+						signature.Lock()
+						signature.conflict = true
+						signature.Unlock()
+						conflict = true
+						break TXN
+					}
+				}
+			}
+
+			if conflict {
+				b.mu.Lock()
+				delete(b.txns, txns[i])
+				b.mu.Unlock()
+				b.conflictMu.Lock()
+				b.conflictTxns[txns[i]] = struct{}{}
+				b.conflictMu.Unlock()
+			} else {
+				//atomic.AddUint64(&b.keyLen, uint64(mutation.Len()))
+			}
+			wg.Done()
+		}(i)
+	}
+	wg.Wait()
+	logutil.BgLogger().Info("MYLOG detect conflict done")
+
+	b.detectMutex.Lock()
+	atomic.StoreUint32(&b.state, batchStateCommitting)
+	b.detectCond.Broadcast()
+	b.detectMutex.Unlock()
+
+	//b.commitDone.Add(len(b.txns) - 1)
+	var (
+		commitTS = b.commitTS
+		err      error
+	)
+	err = b.commit()
+	if err != nil {
+		//logutil.BgLogger().Info("MYLOG check commit err", zap.Error(err))
+		b.errMutex.Lock()
+		b.commitErrs[commitTS] = err
+		b.errMutex.Unlock()
+	} else {
+		//logutil.BgLogger().Info("MYLOG check commit no err")
+	}
+	b.Clear()
+	b.freeReady.Broadcast()
 }

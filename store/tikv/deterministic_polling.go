@@ -3,6 +3,7 @@ package tikv
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
@@ -10,6 +11,7 @@ import (
 const (
 	DeterministicPoolSize            = 4
 	DeterministicMaxBatchSize uint32 = 128
+	FlushDuration                    = 50 * time.Millisecond
 )
 
 type batchManagerPolling struct {
@@ -23,10 +25,32 @@ type batchManagerPolling struct {
 }
 
 func newBatchManagerPolling(store *tikvStore, count int) (*batchManagerPolling, error) {
-	return &batchManagerPolling{
+	p := &batchManagerPolling{
 		store: store,
 		bms:   make(map[uint64]*batchManager),
-	}, nil
+	}
+	go p.CheckFlush()
+	return p, nil
+}
+
+func (b *batchManagerPolling) CheckFlush() {
+	var (
+		beforeBatchStatus uint32
+		beforeRound       int
+	)
+	for {
+		time.Sleep(FlushDuration)
+		b.Lock()
+		if b.batchStatus > 0 && b.batchStatus == beforeBatchStatus && b.round == beforeRound {
+			b.batchStatus = 0
+			b.round++
+			go b.currManager.writeCheckpointStart()
+		} else {
+			beforeBatchStatus = b.batchStatus
+			beforeRound = b.round
+		}
+		b.Unlock()
+	}
 }
 
 func (b *batchManagerPolling) NextBatch(ctx context.Context) oracle.Future {
