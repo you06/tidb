@@ -8,6 +8,11 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
+const (
+	DeterministicPoolSize            = 4
+	DeterministicMaxBatchSize uint32 = 128
+)
+
 type batchManagerPolling struct {
 	sync.Mutex
 	bmArr      []*batchManager
@@ -46,7 +51,7 @@ WAIT:
 	if future != nil {
 		return future
 	}
-	if i == b.index-1 {
+	if i == b.count-1 {
 		next = 0
 	} else {
 		next = i + 1

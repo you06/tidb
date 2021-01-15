@@ -30,10 +30,6 @@ const (
 	CheckPointKey = "checkpoint"
 )
 
-var (
-	DeterministicMaxBatchSize uint32 = 128
-)
-
 type batchFuture struct {
 	bm *batchManager
 }

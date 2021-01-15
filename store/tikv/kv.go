@@ -218,7 +218,7 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
-	bm, err := newBatchManagerPolling(store, 2)
+	bm, err := newBatchManagerPolling(store, DeterministicPoolSize)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
