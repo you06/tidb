@@ -72,22 +72,24 @@ type batchManager struct {
 	commitErrs    map[uint64]error
 	store         *tikvStore
 	vars          *kv.Variables
-	prevTxns      map[uint32]*tikvTxn
-	txns          map[uint32]*tikvTxn
-	conflictTxns  map[uint32]struct{}
+	prevTxns      map[*tikvTxn]struct{}
+	txns          map[*tikvTxn]struct{}
+	conflictTxns  map[*tikvTxn]struct{}
 	polling       *batchManagerPolling
-	//thisBatch     map[uint64]struct{}
+	before        *batchManager
+	noConflicts   map[string]*tikvTxn
 }
 
-func newBatchManager(store *tikvStore, polling *batchManagerPolling) (*batchManager, error) {
+func newBatchManager(store *tikvStore, polling *batchManagerPolling, before *batchManager) (*batchManager, error) {
 	bm := batchManager{
 		state:        batchStateFree,
 		store:        store,
-		txns:         make(map[uint32]*tikvTxn),
+		txns:         make(map[*tikvTxn]struct{}),
 		vars:         kv.DefaultVars,
 		commitErrs:   make(map[uint64]error),
-		conflictTxns: make(map[uint32]struct{}),
+		conflictTxns: make(map[*tikvTxn]struct{}),
 		polling:      polling,
+		before:       before,
 	}
 	bm.freeReady = sync.NewCond(&bm.freeMutex)
 	bm.startReady = sync.NewCond(&bm.startMutex)
@@ -137,9 +139,9 @@ func (b *batchManager) NextBatch(ctx context.Context) oracle.Future {
 }
 
 func (b *batchManager) Clear() {
-	//logutil.BgLogger().Info("MYLOG wait clear ready", zap.Uint64("start ts", b.startTS))
+	logutil.BgLogger().Info("MYLOG wait clear ready", zap.Uint64("start ts", b.startTS))
 	b.clearReady.Wait()
-	logutil.BgLogger().Info("MYLOG wait clear ready done", zap.Uint64("start ts", b.startTS))
+	// logutil.BgLogger().Info("MYLOG wait clear ready done", zap.Int("round", b.round), zap.Uint64("start ts", b.startTS))
 	// b.mu.Lock()
 	// defer b.mu.Unlock()
 	b.polling.DelManager(b.startTS)
@@ -154,8 +156,8 @@ func (b *batchManager) Clear() {
 	b.startErr = nil
 	//b.commitErr = nil
 	b.prevTxns = b.txns
-	b.txns = make(map[uint32]*tikvTxn)
-	b.conflictTxns = make(map[uint32]struct{})
+	b.txns = make(map[*tikvTxn]struct{})
+	b.conflictTxns = make(map[*tikvTxn]struct{})
 	//b.thisBatch = make(map[uint64]struct{})
 	atomic.StoreUint32(&b.state, batchStateFree)
 }
@@ -163,23 +165,23 @@ func (b *batchManager) Clear() {
 func (b *batchManager) removeTxn(txn *tikvTxn) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if _, ok := b.txns[txn.snapshot.replicaReadSeed]; !ok {
+	if _, ok := b.txns[txn]; !ok {
 		panic("unreachable")
 	}
-	delete(b.txns, txn.snapshot.replicaReadSeed)
+	delete(b.txns, txn)
 	//if int(b.txnCount) == len(b.txns) {
 	//	logutil.BgLogger().Info("MYLOG trigger detectConflicts", zap.Uint32("txn", txn.snapshot.replicaReadSeed))
 	//	go b.detectConflicts()
 	//}
 }
 
-func (b *batchManager) removeTxnReady(txn *tikvTxn, ctx context.Context) {
+func (b *batchManager) removeTxnReady(txn *tikvTxn) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	//if _, ok := b.txns[txn.snapshot.replicaReadSeed]; !ok {
 	//	panic("unreachable")
 	//}
-	delete(b.txns, txn.snapshot.replicaReadSeed)
+	// delete(b.txns, txn.snapshot.replicaReadSeed)
 	b.txnCount--
 	//logutil.Logger(ctx).Info("MYLOG call remove ready",
 	//	zap.Uint64("startTS", txn.startTS),
@@ -194,10 +196,10 @@ func (b *batchManager) removeTxnReady(txn *tikvTxn, ctx context.Context) {
 	}
 }
 
-func (b *batchManager) mutationReady(txn *tikvTxn, ctx context.Context) {
+func (b *batchManager) mutationReady(txn *tikvTxn) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.txns[txn.snapshot.replicaReadSeed] = txn
+	b.txns[txn] = struct{}{}
 	b.readyCount++
 	//logutil.Logger(ctx).Info("MYLOG call mutation ready",
 	//	zap.Uint64("startTS", txn.startTS),
@@ -245,7 +247,75 @@ func extractSignature(mutation *memBufferMutations) txnSignature {
 }
 
 func (b *batchManager) detectConflicts() {
-	logutil.BgLogger().Info("MYLOG detect conflict")
+	atomic.StoreUint32(&b.state, batchStateDetecting)
+	// detection
+	var (
+		sizeHint  = 0
+		txns      = make([]*tikvTxn, b.txnCount)
+		mutations = make([]*memBufferMutations, b.txnCount)
+		ok        bool
+		conflict  bool
+		txn       *tikvTxn
+		mutation  *memBufferMutations
+		keys      [][]byte
+	)
+	tID := 0
+	for txn := range b.txns {
+		mutation = txn.committer.GetMutations()
+		txns[tID] = txn
+		mutations[tID] = mutation
+		sizeHint += mutation.Len()
+		tID++
+	}
+	noConflicts := make(map[string]*tikvTxn, sizeHint)
+
+	for i := 0; i < tID; i++ {
+		txn = txns[i]
+		mutation = mutations[i]
+		conflict = false
+		keys = mutation.GetKeys()
+		for _, key := range keys {
+			if _, ok = noConflicts[hex.EncodeToString(key)]; ok {
+				conflict = true
+				break
+			}
+		}
+		if conflict {
+			delete(b.txns, txn)
+		} else {
+			for _, key := range keys {
+				noConflicts[hex.EncodeToString(key)] = txn
+			}
+		}
+	}
+	b.noConflicts = noConflicts
+
+	b.detectMutex.Lock()
+	atomic.StoreUint32(&b.state, batchStateCommitting)
+	b.detectCond.Broadcast()
+	b.detectMutex.Unlock()
+
+	//b.commitDone.Add(len(b.txns) - 1)
+	var (
+		commitTS = b.commitTS
+		err      error
+	)
+	err = b.commit()
+	if err != nil {
+		//logutil.BgLogger().Info("MYLOG check commit err", zap.Error(err))
+		b.errMutex.Lock()
+		b.commitErrs[commitTS] = err
+		b.errMutex.Unlock()
+	} else {
+		//logutil.BgLogger().Info("MYLOG check commit no err")
+	}
+	b.Clear()
+	b.freeReady.Broadcast()
+}
+
+func (b *batchManager) detectConflicts1() {
+	// logutil.BgLogger().Info("MYLOG detect conflict",
+	// 	zap.Int("round", b.round))
 
 	atomic.StoreUint32(&b.state, batchStateDetecting)
 
@@ -259,7 +329,7 @@ func (b *batchManager) detectConflicts() {
 	)
 	wg.Add(int(b.txnCount))
 	tID := 0
-	for _, txn := range b.txns {
+	for txn := range b.txns {
 		go func(tID int, txn *tikvTxn) {
 			mutation := txn.committer.GetMutations()
 			txns[tID] = txn
@@ -269,7 +339,10 @@ func (b *batchManager) detectConflicts() {
 		}(tID, txn)
 		tID++
 	}
-	//logutil.BgLogger().Info("MYLOG detect conflict", zap.Int("txns", tID), zap.Uint32("txnCount", b.txnCount))
+	// logutil.BgLogger().Info("MYLOG detect conflict",
+	// 	zap.Int("round", b.round),
+	// 	zap.Int("txns", tID),
+	// 	zap.Uint32("txnCount", b.txnCount))
 	wg.Wait()
 
 	wg.Add(int(b.txnCount))
@@ -327,10 +400,10 @@ func (b *batchManager) detectConflicts() {
 
 			if conflict {
 				b.mu.Lock()
-				delete(b.txns, txns[i].snapshot.replicaReadSeed)
+				delete(b.txns, txns[i])
 				b.mu.Unlock()
 				b.conflictMu.Lock()
-				b.conflictTxns[txns[i].snapshot.replicaReadSeed] = struct{}{}
+				b.conflictTxns[txns[i]] = struct{}{}
 				b.conflictMu.Unlock()
 			} else {
 				atomic.AddUint64(&b.keyLen, uint64(mutation.Len()))
@@ -371,7 +444,7 @@ func (b *batchManager) hasConflict(txn *tikvTxn) bool {
 	}
 	b.detectMutex.Unlock()
 	// b.conflictMu.Lock()
-	_, ok := b.conflictTxns[txn.snapshot.replicaReadSeed]
+	_, ok := b.conflictTxns[txn]
 	// b.conflictMu.Unlock()
 	//logutil.BgLogger().Info("MYLOG call hasConflict",
 	//	zap.Uint64("startTS", txn.startTS),
@@ -449,7 +522,7 @@ func (b *batchManager) mergeMutations() {
 	)
 
 	wg.Add(len(b.txns))
-	for _, txn := range b.txns {
+	for txn := range b.txns {
 		mutation := txn.committer.GetMutations()
 		go func(mutation *memBufferMutations, start int) {
 			for i := 0; i < mutation.Len(); i++ {

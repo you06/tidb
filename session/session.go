@@ -1543,9 +1543,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	if ok {
 		return s.cachedPlanExec(ctx, stmtID, preparedStmt, args)
 	}
-	logutil.Logger(ctx).Info("MYLOG execute prepared stmt", zap.Uint32("stmtID", stmtID))
 	rs, err := s.preparedStmtExec(ctx, stmtID, preparedStmt, args)
-	logutil.Logger(ctx).Info("MYLOG execute prepared stmt done", zap.Uint32("stmtID", stmtID), zap.Error(err))
 	return rs, err
 }
 

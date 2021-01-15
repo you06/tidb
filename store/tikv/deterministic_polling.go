@@ -19,6 +19,7 @@ type batchManagerPolling struct {
 	currManager *batchManager
 	bms         map[uint64]*batchManager
 	batchStatus uint32
+	round       int
 }
 
 func newBatchManagerPolling(store *tikvStore, count int) (*batchManagerPolling, error) {
@@ -32,12 +33,13 @@ func (b *batchManagerPolling) NextBatch(ctx context.Context) oracle.Future {
 	b.Lock()
 	b.batchStatus++
 	if b.batchStatus == 1 {
-		b.currManager, _ = newBatchManager(b.store, b)
+		b.currManager, _ = newBatchManager(b.store, b, b.currManager)
 	}
 	future := b.currManager.NextBatch(ctx)
 	if b.batchStatus == DeterministicMaxBatchSize {
 		go b.currManager.writeCheckpointStart()
 		b.batchStatus = 0
+		b.round++
 	}
 	b.Unlock()
 	return future

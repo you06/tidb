@@ -284,19 +284,19 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	if err != nil {
 		if isDeterministic {
-			bm.removeTxn(txn)
+			bm.removeTxnReady(txn)
 		}
 		return errors.Trace(err)
 	}
 	if committer.GetMutations().Len() == 0 {
 		if isDeterministic {
-			bm.removeTxnReady(txn, ctx)
+			bm.removeTxnReady(txn)
 		}
 		return nil
 	}
 
 	if isDeterministic {
-		bm.mutationReady(txn, ctx)
+		bm.mutationReady(txn)
 		if bm.hasConflict(txn) {
 			// retry next batch
 			return kv.ErrWriteConflict.FastGenByArgs(txn.startTS, txn.startTS, txn.commitTS, "[]")
@@ -353,7 +353,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 func (txn *tikvTxn) RemoveReady() {
 	bm := txn.store.batchManager.GetByStartTS(txn.startTS)
 	if bm != nil {
-		bm.removeTxnReady(txn, context.Background())
+		bm.removeTxnReady(txn)
 	}
 }
 
