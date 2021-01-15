@@ -275,26 +275,33 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	initRegion := trace.StartRegion(ctx, "InitKeys")
 	err = committer.initKeysAndMutations()
 	initRegion.End()
+	var (
+		bm              *batchManager
+		isDeterministic = txn.IsDeterministic()
+	)
+	if isDeterministic {
+		bm = txn.store.batchManager.GetByStartTS(txn.startTS)
+	}
 	if err != nil {
-		if txn.IsDeterministic() {
-			txn.store.batchManager.removeTxn(txn)
+		if isDeterministic {
+			bm.removeTxn(txn)
 		}
 		return errors.Trace(err)
 	}
 	if committer.GetMutations().Len() == 0 {
-		if txn.IsDeterministic() {
-			txn.store.batchManager.removeTxnReady(txn, ctx)
+		if isDeterministic {
+			bm.removeTxnReady(txn, ctx)
 		}
 		return nil
 	}
 
-	if txn.IsDeterministic() {
-		txn.store.batchManager.mutationReady(txn, ctx)
-		if txn.store.batchManager.hasConflict(txn) {
+	if isDeterministic {
+		bm.mutationReady(txn, ctx)
+		if bm.hasConflict(txn) {
 			// retry next batch
 			return kv.ErrWriteConflict.FastGenByArgs(txn.startTS, txn.startTS, txn.commitTS, "[]")
 		}
-		return txn.store.batchManager.getCommitErr(txn.commitTS)
+		return bm.getCommitErr(txn.commitTS)
 	}
 
 	defer func() {
@@ -344,7 +351,10 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 }
 
 func (txn *tikvTxn) RemoveReady() {
-	txn.store.batchManager.removeTxnReady(txn, context.Background())
+	bm := txn.store.batchManager.GetByStartTS(txn.startTS)
+	if bm != nil {
+		bm.removeTxnReady(txn, context.Background())
+	}
 }
 
 func (txn *tikvTxn) close() {

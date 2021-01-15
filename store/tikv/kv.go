@@ -166,7 +166,7 @@ type tikvStore struct {
 
 	replicaReadSeed uint32        // this is used to load balance followers / learners when replica read is enabled
 	memCache        kv.MemManager // this is used to query from memory
-	batchManager    *batchManager
+	batchManager    *batchManagerPolling
 }
 
 func (s *tikvStore) UpdateSPCache(cachedSP uint64, cachedTime time.Time) {
@@ -218,7 +218,7 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
-	bm, err := newBatchManager(store)
+	bm, err := newBatchManagerPolling(store, 2)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -30,6 +30,10 @@ const (
 	CheckPointKey = "checkpoint"
 )
 
+var (
+	DeterministicMaxBatchSize uint32 = 128
+)
+
 type batchFuture struct {
 	bm *batchManager
 }
@@ -95,18 +99,17 @@ func newBatchManager(store *tikvStore) (*batchManager, error) {
 }
 
 // NextBatch return next batch's startTS when it's ready
-func (b *batchManager) NextBatch(ctx context.Context, connID uint64) oracle.Future {
+func (b *batchManager) NextBatch(ctx context.Context) oracle.Future {
 	// logutil.Logger(ctx).Info("MYLOG call NextBatch", zap.Stack("trace"))
-WAIT:
 	b.freeMutex.Lock()
 	for atomic.LoadUint32(&b.state)&batchStateCanNext == 0 {
 		b.freeReady.Wait()
 	}
-	if b.txnCount == 0 {
+	if b.txnCount == 0 && b.futureCount < DeterministicMaxBatchSize {
 		b.futureCount++
 	} else {
 		b.freeMutex.Unlock()
-		goto WAIT
+		return nil
 	}
 	b.freeMutex.Unlock()
 
