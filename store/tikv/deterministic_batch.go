@@ -23,6 +23,7 @@ const (
 	batchStateExecuting
 	batchStateDetecting
 	batchStateCommitting
+	batchStateCommitDone
 
 	batchStateCanNext = batchStateFree | batchStateStarting
 
@@ -146,7 +147,7 @@ func (b *batchManager) Clear() {
 	logutil.BgLogger().Info("MYLOG wait clear ready", zap.Uint64("start ts", b.startTS))
 	b.clearReady.Wait()
 	b.freeMutex.Lock()
-	atomic.StoreUint32(&b.state, batchStateFree)
+	atomic.StoreUint32(&b.state, batchStateCommitDone)
 	b.freeReady.Broadcast()
 	b.freeMutex.Unlock()
 	// logutil.BgLogger().Info("MYLOG wait clear ready done", zap.Int("round", b.round), zap.Uint64("start ts", b.startTS))
@@ -246,7 +247,7 @@ func (b *batchManager) getCommitErr() error {
 	//batchCommitTS := atomic.LoadUint64(&b.commitTS)
 	//if batchCommitTS == commitTS {
 	b.freeMutex.Lock()
-	for atomic.LoadUint32(&b.state) != batchStateFree {
+	for atomic.LoadUint32(&b.state) != batchStateCommitDone {
 		b.freeReady.Wait()
 	}
 	b.freeMutex.Unlock()
@@ -277,7 +278,14 @@ func (b *batchManager) writeCheckpointStart() {
 	b.freeMutex.Lock()
 	// may wait before
 	// important to release the pointer, this avoid memory leak
-	b.before = nil
+	if b.before != nil {
+		b.before.detectMutex.Lock()
+		for atomic.LoadUint32(&b.before.state) < batchStateCommitting {
+			b.before.detectCond.Wait()
+		}
+		b.before.detectMutex.Unlock()
+		b.before = nil
+	}
 	b.polling.SetManager(b.startTS, b)
 	atomic.StoreUint32(&b.state, batchStateExecuting)
 	b.txnCount = b.futureCount
