@@ -23,6 +23,7 @@ const (
 	batchStateExecuting
 	batchStateDetecting
 	batchStateCommitting
+	batchStateLocking
 	batchStateCommitDone
 
 	batchStateCanNext = batchStateFree | batchStateStarting
@@ -279,12 +280,8 @@ func (b *batchManager) writeCheckpointStart() {
 	// may wait before
 	// important to release the pointer, this avoid memory leak
 	if b.before != nil {
-		b.before.detectMutex.Lock()
-		for atomic.LoadUint32(&b.before.state) < batchStateCommitting {
-			b.before.detectCond.Wait()
+		for atomic.LoadUint32(&b.before.state) < batchStateLocking {
 		}
-		b.before.detectMutex.Unlock()
-		b.before = nil
 	}
 	b.polling.SetManager(b.startTS, b)
 	atomic.StoreUint32(&b.state, batchStateExecuting)
@@ -719,6 +716,7 @@ func (b *batchManager) detectConflicts() {
 		b.detectCond.Broadcast()
 		b.detectMutex.Unlock()
 	} else {
+		atomic.StoreUint32(&b.state, batchStateLocking)
 		b.noConflictMutex.Lock()
 		go b.extractNoConflicts()
 	}
