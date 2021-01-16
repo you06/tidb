@@ -25,6 +25,11 @@ type batchManagerPolling struct {
 	bms         map[uint64]*batchManager
 	batchStatus uint32
 	round       int
+
+	pessimisticMu          sync.Mutex
+	pessimisticManager     *batchManager
+	pessimisticBatchStatus uint32
+	pessimisticRound       int
 }
 
 func newBatchManagerPolling(store *tikvStore, count int) (*batchManagerPolling, error) {
@@ -38,21 +43,35 @@ func newBatchManagerPolling(store *tikvStore, count int) (*batchManagerPolling, 
 
 func (b *batchManagerPolling) CheckFlush() {
 	var (
-		beforeBatchStatus uint32
-		beforeRound       int
+		beforeBatchStatus            uint32
+		beforeRound                  int
+		beforePessimisticBatchStatus uint32
+		beforePessimisticRound       int
+		ticker                       = time.NewTicker(FlushDuration)
 	)
 	for {
-		time.Sleep(FlushDuration)
+		<-ticker.C
 		b.Lock()
 		if b.batchStatus > 0 && b.batchStatus == beforeBatchStatus && b.round == beforeRound {
 			b.batchStatus = 0
 			b.round++
 			go b.currManager.writeCheckpointStart()
-		} else {
-			beforeBatchStatus = b.batchStatus
-			beforeRound = b.round
 		}
+		beforeBatchStatus = b.batchStatus
+		beforeRound = b.round
 		b.Unlock()
+
+		b.pessimisticMu.Lock()
+		if b.pessimisticBatchStatus > 0 &&
+			b.pessimisticBatchStatus == beforePessimisticBatchStatus &&
+			b.pessimisticRound == beforePessimisticRound {
+			b.pessimisticBatchStatus = 0
+			b.round++
+			go b.pessimisticManager.commitDirectly()
+		}
+		beforePessimisticBatchStatus = b.pessimisticBatchStatus
+		beforePessimisticRound = b.pessimisticRound
+		b.pessimisticMu.Unlock()
 	}
 }
 
@@ -70,6 +89,26 @@ func (b *batchManagerPolling) NextBatch(ctx context.Context) oracle.Future {
 	}
 	b.Unlock()
 	return future
+}
+
+func (b *batchManagerPolling) GetPessimisticBatch(txn *tikvTxn) *batchManager {
+	b.pessimisticMu.Lock()
+	b.pessimisticBatchStatus++
+	if b.pessimisticBatchStatus == 1 {
+		b.pessimisticManager, _ = newBatchManager(b.store, b, nil)
+		b.pessimisticManager.SkipLock = false
+		b.pessimisticManager.IsPessimisticBatch = true
+	}
+	bm := b.pessimisticManager
+	bm.futureCount++
+	bm.txns[txn] = struct{}{}
+	if b.pessimisticBatchStatus == DeterministicMaxBatchSize {
+		go b.pessimisticManager.commitDirectly()
+		b.pessimisticBatchStatus = 0
+		b.pessimisticRound++
+	}
+	b.pessimisticMu.Unlock()
+	return bm
 }
 
 func (b *batchManagerPolling) SetManager(ts uint64, bm *batchManager) {

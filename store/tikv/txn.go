@@ -249,11 +249,17 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		connID = val.(uint64)
 	}
 
-	var err error
+	var (
+		err                       error
+		bm                        *batchManager
+		isPessimistic             = txn.IsPessimistic()
+		isDeterministic           = txn.IsDeterministic() && !isPessimistic
+		pessimistic2Deterministic = connID > 0 && Pessimistic2Deterministic
+	)
 	// If the txn use pessimistic lock, committer is initialized.
 	committer := txn.committer
 	if committer == nil {
-		if txn.IsDeterministic() {
+		if isDeterministic || pessimistic2Deterministic {
 			committer, err = newDeterministicCommitter(txn, connID)
 		} else {
 			committer, err = newTwoPhaseCommitter(txn, connID)
@@ -275,10 +281,6 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	initRegion := trace.StartRegion(ctx, "InitKeys")
 	err = committer.initKeysAndMutations()
 	initRegion.End()
-	var (
-		bm              *batchManager
-		isDeterministic = txn.IsDeterministic()
-	)
 	if isDeterministic {
 		bm = txn.store.batchManager.GetByStartTS(txn.startTS)
 	}
@@ -301,6 +303,9 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 			// retry next batch
 			return kv.ErrWriteConflict.FastGenByArgs(txn.startTS, txn.startTS, txn.commitTS, "[]")
 		}
+		return bm.getCommitErr()
+	} else if isPessimistic && pessimistic2Deterministic {
+		bm = txn.store.batchManager.GetPessimisticBatch(txn)
 		return bm.getCommitErr()
 	}
 

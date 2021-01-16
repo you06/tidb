@@ -70,16 +70,18 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 	}
 	elapsed := uint64(time.Since(c.txn.startTime) / time.Millisecond)
 	req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticLock, &pb.PessimisticLockRequest{
-		Mutations:    mutations,
-		PrimaryLock:  c.primary(),
-		StartVersion: c.startTS,
-		ForUpdateTs:  c.forUpdateTS,
-		LockTtl:      elapsed + atomic.LoadUint64(&ManagedLockTTL),
-		IsFirstLock:  c.isFirstLock,
-		WaitTimeout:  action.LockWaitTime,
-		ReturnValues: action.ReturnValues,
-		MinCommitTs:  c.forUpdateTS + 1,
+		Mutations:       mutations,
+		PrimaryLock:     c.primary(),
+		StartVersion:    c.startTS,
+		ForUpdateTs:     c.forUpdateTS,
+		LockTtl:         elapsed + atomic.LoadUint64(&ManagedLockTTL),
+		IsFirstLock:     c.isFirstLock,
+		WaitTimeout:     action.LockWaitTime,
+		ReturnValues:    action.ReturnValues,
+		MinCommitTs:     c.forUpdateTS + 1,
+		IsDeterministic: c.connID > 0 && Pessimistic2Deterministic,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
+
 	lockWaitStartTime := action.WaitStartTime
 	for {
 		// if lockWaitTime set, refine the request `WaitTimeout` field based on timeout limit

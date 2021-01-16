@@ -3,7 +3,6 @@ package tikv
 import (
 	"context"
 	"encoding/hex"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,7 +31,8 @@ const (
 	txnStateBeforeCommit
 	CheckPointKey = "checkpoint"
 
-	CompatibleMode = true
+	Pessimistic2Deterministic = true
+	CompatibleMode            = true
 )
 
 type batchFuture struct {
@@ -69,6 +69,7 @@ type batchManager struct {
 	detectCond          *sync.Cond
 	commitMutex         sync.Mutex
 	commitReady         *sync.Cond
+	keyStartTSReady     sync.WaitGroup
 	clearReady          sync.WaitGroup
 	mutations           *PlainMutations
 	lockMutations       *PlainMutations
@@ -83,19 +84,24 @@ type batchManager struct {
 	polling             *batchManagerPolling
 	before              *batchManager
 	noConflicts         map[string]*tikvTxn
+	key2StartTS         map[string]uint64
 	noConflictMutex     sync.Mutex
 	needRebuildMutation bool
+	SkipLock            bool
+	IsPessimisticBatch  bool
 }
 
 func newBatchManager(store *tikvStore, polling *batchManagerPolling, before *batchManager) (*batchManager, error) {
 	bm := batchManager{
-		state:        batchStateFree,
-		store:        store,
-		txns:         make(map[*tikvTxn]struct{}),
-		vars:         kv.DefaultVars,
-		conflictTxns: make(map[*tikvTxn]struct{}),
-		polling:      polling,
-		before:       before,
+		state:              batchStateFree,
+		store:              store,
+		txns:               make(map[*tikvTxn]struct{}, DeterministicMaxBatchSize),
+		vars:               kv.DefaultVars,
+		conflictTxns:       make(map[*tikvTxn]struct{}),
+		polling:            polling,
+		before:             before,
+		SkipLock:           !CompatibleMode,
+		IsPessimisticBatch: false,
 	}
 	bm.freeReady = sync.NewCond(&bm.freeMutex)
 	bm.startReady = sync.NewCond(&bm.startMutex)
@@ -306,6 +312,12 @@ func (b *batchManager) writeCheckpointRollback() error {
 }
 
 func (b *batchManager) mergeMutations() {
+	if b.keyLen == 0 {
+		for txn := range b.txns {
+			b.keyLen += txn.committer.GetMutations().Len()
+		}
+	}
+
 	var (
 		ops                = make([]pb.Op, b.keyLen)
 		keys               = make([][]byte, b.keyLen)
@@ -313,19 +325,30 @@ func (b *batchManager) mergeMutations() {
 		isPessimisticLocks = make([]bool, b.keyLen)
 		start              = 0
 		wg                 sync.WaitGroup
+		lock               sync.Mutex
 	)
 
 	wg.Add(len(b.txns))
+	b.keyStartTSReady.Add(len(b.txns))
+	b.key2StartTS = make(map[string]uint64, b.keyLen)
 	for txn := range b.txns {
 		mutation := txn.committer.GetMutations()
-		go func(mutation *memBufferMutations, start int) {
+		go func(mutation *memBufferMutations, start int, startTS uint64) {
 			for i := 0; i < mutation.Len(); i++ {
 				ops[start+i] = mutation.GetOp(i)
 				keys[start+i] = mutation.GetKey(i)
 				values[start+i] = mutation.GetValue(i)
 			}
 			wg.Done()
-		}(mutation, start)
+			if b.IsPessimisticBatch {
+				lock.Lock()
+				for i := 0; i < mutation.Len(); i++ {
+					b.key2StartTS[hex.EncodeToString(mutation.GetKey(i))] = startTS
+				}
+				lock.Unlock()
+			}
+			b.keyStartTSReady.Done()
+		}(mutation, start, txn.startTS)
 		start += mutation.Len()
 	}
 	wg.Wait()
@@ -395,6 +418,28 @@ func (b *batchManager) commit() error {
 	return err
 }
 
+func (b *batchManager) commitDirectly() {
+	var (
+		bo    *Backoffer
+		start = time.Now()
+	)
+	logutil.BgLogger().Info("MYLOG start commit directly")
+	b.writeCheckpointStart()
+	if b.startErr != nil {
+		b.commitErr = b.startErr
+		goto RESULT
+	}
+	b.mergeMutations()
+	bo = NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, b.vars)
+	b.commitErr = b.writeDeterministicGroups(bo, b.mutations)
+	logutil.BgLogger().Info("MYLOG start commit directly done", zap.Duration("cost", time.Since(start)))
+RESULT:
+	b.freeMutex.Lock()
+	atomic.StoreUint32(&b.state, batchStateCommitDone)
+	b.freeReady.Broadcast()
+	b.freeMutex.Unlock()
+}
+
 func (b *batchManager) writeDeterministicGroups(bo *Backoffer, mutations CommitterMutations) error {
 	var (
 		groups  []groupedMutations
@@ -408,6 +453,11 @@ func (b *batchManager) writeDeterministicGroups(bo *Backoffer, mutations Committ
 	}
 
 	groupWg.Add(len(groups))
+
+	if b.IsPessimisticBatch {
+		b.keyStartTSReady.Wait()
+	}
+
 	for _, group := range groups {
 		go func(group groupedMutations) {
 			writeBo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, b.vars)
@@ -424,18 +474,25 @@ func (b *batchManager) writeDeterministicGroups(bo *Backoffer, mutations Committ
 
 func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, batch groupedMutations) error {
 	mutations := make([]*pb.Mutation, batch.mutations.Len())
+	startVersions := make([]uint64, batch.mutations.Len())
 	for i := 0; i < batch.mutations.Len(); i++ {
+		key := batch.mutations.GetKey(i)
 		mutations[i] = &pb.Mutation{
 			Op:    batch.mutations.GetOp(i),
-			Key:   batch.mutations.GetKey(i),
+			Key:   key,
 			Value: batch.mutations.GetValue(i),
 		}
+		if b.IsPessimisticBatch {
+			startVersions[i] = b.key2StartTS[hex.EncodeToString(key)]
+		} else {
+			startVersions[i] = b.startTS
+		}
 	}
-	//logutil.BgLogger().Info("MYLOG, write req mutation", zap.String("mutation", fmt.Sprintln(mutations)))
 	req := tikvrpc.NewRequest(tikvrpc.CmdDeterministicWrite, &pb.DeterministicWriteRequest{
 		Mutations:    mutations,
-		StartVersion: b.startTS,
+		StartVersion: startVersions,
 		CommitTs:     b.commitTS,
+		SkipLock:     b.SkipLock,
 	}, pb.Context{Priority: pb.CommandPri_High, SyncLog: false})
 
 	for {
@@ -478,9 +535,9 @@ func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, bat
 				//logutil.BgLogger().Info("MYLOG, resp got no err")
 			} else {
 				for _, err := range errs {
-					if !strings.Contains(err.String(), "TxnLockNotFound") {
-						logutil.BgLogger().Info("MYLOG, resp err", zap.Stringer("err", err))
-					}
+					//if !strings.Contains(err.String(), "TxnLockNotFound") {
+					logutil.BgLogger().Info("MYLOG, resp err", zap.Stringer("err", err))
+					//}
 				}
 			}
 		}
@@ -524,14 +581,15 @@ func (b *batchManager) lockDeterministic(bo *Backoffer, wg *sync.WaitGroup, batc
 	}
 	//logutil.BgLogger().Info("MYLOG, write req mutation", zap.String("mutation", fmt.Sprintln(mutations)))
 	req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticLock, &pb.PessimisticLockRequest{
-		Mutations:    mutations,
-		PrimaryLock:  mutations[0].GetKey(),
-		StartVersion: b.startTS,
-		ForUpdateTs:  b.commitTS,
-		LockTtl:      atomic.LoadUint64(&ManagedLockTTL),
-		WaitTimeout:  0,
-		ReturnValues: false,
-		MinCommitTs:  1,
+		Mutations:       mutations,
+		PrimaryLock:     mutations[0].GetKey(),
+		StartVersion:    b.startTS,
+		ForUpdateTs:     b.commitTS,
+		LockTtl:         atomic.LoadUint64(&ManagedLockTTL),
+		WaitTimeout:     0,
+		ReturnValues:    false,
+		MinCommitTs:     1,
+		IsDeterministic: true,
 	}, pb.Context{Priority: pb.CommandPri_High, SyncLog: false})
 
 	for {

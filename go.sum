@@ -924,6 +924,10 @@ github.com/xordataexchange/crypt v0.0.3-0.20170626215501-b2862e3d0a77/go.mod h1:
 github.com/yookoala/realpath v1.0.0/go.mod h1:gJJMA9wuX7AcqLy1+ffPatSCySA1FQ2S8Ya9AIoYBpE=
 github.com/you06/kvproto v0.0.0-20210101215038-3f63d1d1c88c h1:QM99Vm87hoCPf+VchRMFSEDwlo1LgA8MZ2+6R71qG4s=
 github.com/you06/kvproto v0.0.0-20210101215038-3f63d1d1c88c/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
+github.com/you06/kvproto v0.0.0-20210116042254-a54d2d8ea451 h1:aqnG61P9m5mbyAwXFlO9en0j+qr7ynSczzmm3s77W30=
+github.com/you06/kvproto v0.0.0-20210116042254-a54d2d8ea451/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
+github.com/you06/kvproto v0.0.0-20210116095055-4444662fe0b8 h1:I4RtbHT753pgtdFmZxZ1gZY9FY9mPzrEekLsgboe2oQ=
+github.com/you06/kvproto v0.0.0-20210116095055-4444662fe0b8/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
 github.com/you06/unistore v0.0.0-20210102163015-a59ec47f58c7 h1:OXlpPEO1uZFo326/VCk+mxyMXnbK8E/JeT9gNVqlCAI=
 github.com/you06/unistore v0.0.0-20210102163015-a59ec47f58c7/go.mod h1:3tFFidLYmiMz4CdgjxVl5D/55c1CM7ZDDkH9zKvDfZ4=
 github.com/yuin/goldmark v1.1.25/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
