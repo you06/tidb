@@ -29,6 +29,8 @@ const (
 	txnStateInit uint64 = iota
 	txnStateBeforeCommit
 	CheckPointKey = "checkpoint"
+
+	CompatibleMode = true
 )
 
 type batchFuture struct {
@@ -55,30 +57,32 @@ type batchManager struct {
 	commitTS    uint64
 	keyLen      int
 
-	mu            sync.Mutex
-	conflictMu    sync.Mutex
-	freeMutex     sync.Mutex
-	freeReady     *sync.Cond
-	startMutex    sync.Mutex
-	startReady    *sync.Cond
-	detectMutex   sync.Mutex
-	detectCond    *sync.Cond
-	commitMutex   sync.Mutex
-	commitReady   *sync.Cond
-	clearReady    sync.WaitGroup
-	mutations     *PlainMutations
-	lockMutations *PlainMutations
-	startErr      error
-	errMutex      sync.Mutex
-	commitErr     error
-	store         *tikvStore
-	vars          *kv.Variables
-	prevTxns      map[*tikvTxn]struct{}
-	txns          map[*tikvTxn]struct{}
-	conflictTxns  map[*tikvTxn]struct{}
-	polling       *batchManagerPolling
-	before        *batchManager
-	noConflicts   map[string]*tikvTxn
+	mu                  sync.Mutex
+	conflictMu          sync.Mutex
+	freeMutex           sync.Mutex
+	freeReady           *sync.Cond
+	startMutex          sync.Mutex
+	startReady          *sync.Cond
+	detectMutex         sync.Mutex
+	detectCond          *sync.Cond
+	commitMutex         sync.Mutex
+	commitReady         *sync.Cond
+	clearReady          sync.WaitGroup
+	mutations           *PlainMutations
+	lockMutations       *PlainMutations
+	startErr            error
+	errMutex            sync.Mutex
+	commitErr           error
+	store               *tikvStore
+	vars                *kv.Variables
+	prevTxns            map[*tikvTxn]struct{}
+	txns                map[*tikvTxn]struct{}
+	conflictTxns        map[*tikvTxn]struct{}
+	polling             *batchManagerPolling
+	before              *batchManager
+	noConflicts         map[string]*tikvTxn
+	noConflictMutex     sync.Mutex
+	needRebuildMutation bool
 }
 
 func newBatchManager(store *tikvStore, polling *batchManagerPolling, before *batchManager) (*batchManager, error) {
@@ -365,11 +369,20 @@ func (b *batchManager) groupMutations(bo *Backoffer, mutations CommitterMutation
 func (b *batchManager) commit() error {
 	b.mergeMutations()
 	//logutil.BgLogger().Info("MYLOG write locks", zap.Int("txn count", len(b.txns)))
-	//bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, b.vars)
-	//err := b.lockDeterministicGroups(bo, b.lockMutations)
-	//if err != nil {
-	//	return err
-	//}
+	if CompatibleMode {
+		bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, b.vars)
+		err := b.lockDeterministicGroups(bo, b.lockMutations)
+		if err != nil {
+			return err
+		}
+		b.detectMutex.Lock()
+		atomic.StoreUint32(&b.state, batchStateCommitting)
+		b.detectCond.Broadcast()
+		b.detectMutex.Unlock()
+		if b.needRebuildMutation {
+			b.mergeMutations()
+		}
+	}
 	logutil.BgLogger().Info("MYLOG start commit")
 	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, b.vars)
 	err := b.writeDeterministicGroups(bo, b.mutations)
@@ -550,14 +563,21 @@ func (b *batchManager) lockDeterministic(bo *Backoffer, wg *sync.WaitGroup, batc
 
 		if writeResponse, ok := resp.Resp.(*pb.PessimisticLockResponse); ok {
 			errs := writeResponse.GetErrors()
-			if len(errs) == 0 {
-				break
-				//logutil.BgLogger().Info("MYLOG, resp got no err")
-			} else {
-				for _, err := range errs {
-					logutil.BgLogger().Info("MYLOG, resp err", zap.Stringer("err", err))
+			b.noConflictMutex.Lock()
+			for _, err := range errs {
+				if alreadyExist := err.GetAlreadyExist(); alreadyExist != nil {
+					b.needRebuildMutation = true
+					key := hex.EncodeToString(alreadyExist.GetKey())
+					if txn, ok := b.noConflicts[key]; ok {
+						mutation := txn.committer.GetMutations()
+						b.keyLen -= mutation.Len()
+						for _, mk := range mutation.GetKeys() {
+							delete(b.noConflicts, hex.EncodeToString(mk))
+						}
+					}
 				}
 			}
+			b.noConflictMutex.Unlock()
 		}
 		break
 	}
@@ -684,10 +704,16 @@ func (b *batchManager) detectConflicts() {
 	logutil.BgLogger().Info("MYLOG detect conflict done")
 
 	b.keyLen = int(keyLen)
-	b.detectMutex.Lock()
-	atomic.StoreUint32(&b.state, batchStateCommitting)
-	b.detectCond.Broadcast()
-	b.detectMutex.Unlock()
+
+	if !CompatibleMode {
+		b.detectMutex.Lock()
+		atomic.StoreUint32(&b.state, batchStateCommitting)
+		b.detectCond.Broadcast()
+		b.detectMutex.Unlock()
+	} else {
+		b.noConflictMutex.Lock()
+		go b.extractNoConflicts()
+	}
 
 	//b.commitDone.Add(len(b.txns) - 1)
 	//var (
@@ -706,6 +732,23 @@ func (b *batchManager) detectConflicts() {
 	}
 
 	b.Clear()
+}
+
+func (b *batchManager) extractNoConflicts() {
+	noConflicts := make(map[string]*tikvTxn, b.keyLen)
+	var (
+		keys     [][]byte
+		mutation *memBufferMutations
+	)
+	for txn := range b.txns {
+		mutation = txn.committer.GetMutations()
+		keys = mutation.GetKeys()
+		for _, key := range keys {
+			noConflicts[hex.EncodeToString(key)] = txn
+		}
+	}
+	b.noConflicts = noConflicts
+	b.noConflictMutex.Unlock()
 }
 
 func (b *batchManager) detectConflictsSingleThread() {
