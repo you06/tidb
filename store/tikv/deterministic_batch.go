@@ -69,7 +69,7 @@ type batchManager struct {
 	lockMutations *PlainMutations
 	startErr      error
 	errMutex      sync.Mutex
-	commitErrs    map[uint64]error
+	commitErr     error
 	store         *tikvStore
 	vars          *kv.Variables
 	prevTxns      map[*tikvTxn]struct{}
@@ -86,7 +86,6 @@ func newBatchManager(store *tikvStore, polling *batchManagerPolling, before *bat
 		store:        store,
 		txns:         make(map[*tikvTxn]struct{}),
 		vars:         kv.DefaultVars,
-		commitErrs:   make(map[uint64]error),
 		conflictTxns: make(map[*tikvTxn]struct{}),
 		polling:      polling,
 		before:       before,
@@ -141,10 +140,15 @@ func (b *batchManager) NextBatch(ctx context.Context) oracle.Future {
 func (b *batchManager) Clear() {
 	logutil.BgLogger().Info("MYLOG wait clear ready", zap.Uint64("start ts", b.startTS))
 	b.clearReady.Wait()
+	b.freeMutex.Lock()
+	atomic.StoreUint32(&b.state, batchStateFree)
+	b.freeReady.Broadcast()
+	b.freeMutex.Unlock()
 	// logutil.BgLogger().Info("MYLOG wait clear ready done", zap.Int("round", b.round), zap.Uint64("start ts", b.startTS))
 	// b.mu.Lock()
 	// defer b.mu.Unlock()
 	b.polling.DelManager(b.startTS)
+	return
 	b.waitCount = 0
 	b.futureCount = 0
 	b.txnCount = 0
@@ -159,7 +163,6 @@ func (b *batchManager) Clear() {
 	b.txns = make(map[*tikvTxn]struct{})
 	b.conflictTxns = make(map[*tikvTxn]struct{})
 	//b.thisBatch = make(map[uint64]struct{})
-	atomic.StoreUint32(&b.state, batchStateFree)
 }
 
 func (b *batchManager) removeTxn(txn *tikvTxn) {
@@ -233,20 +236,21 @@ func (b *batchManager) hasConflict(txn *tikvTxn) bool {
 	return ok
 }
 
-func (b *batchManager) getCommitErr(commitTS uint64) error {
+func (b *batchManager) getCommitErr() error {
 	//logutil.BgLogger().Info("MYLOG try get commit err", zap.Uint64("commitTS", commitTS))
-	batchCommitTS := atomic.LoadUint64(&b.commitTS)
-	if batchCommitTS == commitTS {
-		b.freeMutex.Lock()
-		for atomic.LoadUint32(&b.state) != batchStateFree {
-			b.freeReady.Wait()
-		}
-		b.freeMutex.Unlock()
+	//batchCommitTS := atomic.LoadUint64(&b.commitTS)
+	//if batchCommitTS == commitTS {
+	b.freeMutex.Lock()
+	for atomic.LoadUint32(&b.state) != batchStateFree {
+		b.freeReady.Wait()
 	}
+	b.freeMutex.Unlock()
+	//return b.commitErrs[commitTS]
+	//defer b.errMutex.Unlock()
+	//b.errMutex.Lock()
 	//logutil.BgLogger().Info("MYLOG got commit err", zap.Uint64("commitTS", commitTS))
-	b.errMutex.Lock()
-	defer b.errMutex.Unlock()
-	return b.commitErrs[commitTS]
+	//}
+	return b.commitErr
 }
 
 func (b *batchManager) newCheckpointBackOffer() *Backoffer {
@@ -680,21 +684,22 @@ func (b *batchManager) detectConflicts() {
 	b.detectMutex.Unlock()
 
 	//b.commitDone.Add(len(b.txns) - 1)
-	var (
-		commitTS = b.commitTS
-		err      error
-	)
-	err = b.commit()
+	//var (
+	//	commitTS = b.commitTS
+	//	err      error
+	//)
+	err := b.commit()
 	if err != nil {
 		//logutil.BgLogger().Info("MYLOG check commit err", zap.Error(err))
-		b.errMutex.Lock()
-		b.commitErrs[commitTS] = err
-		b.errMutex.Unlock()
+		//b.errMutex.Lock()
+		//b.commitErrs[commitTS] = err
+		b.commitErr = err
+		//b.errMutex.Unlock()
 	} else {
 		//logutil.BgLogger().Info("MYLOG check commit no err")
 	}
+
 	b.Clear()
-	b.freeReady.Broadcast()
 }
 
 func (b *batchManager) detectConflictsSingleThread() {
@@ -751,18 +756,18 @@ func (b *batchManager) detectConflictsSingleThread() {
 
 	//b.commitDone.Add(len(b.txns) - 1)
 	var (
-		commitTS = b.commitTS
-		err      error
+		//commitTS = b.commitTS
+		err error
 	)
 	err = b.commit()
 	if err != nil {
 		//logutil.BgLogger().Info("MYLOG check commit err", zap.Error(err))
-		b.errMutex.Lock()
-		b.commitErrs[commitTS] = err
-		b.errMutex.Unlock()
+		//b.errMutex.Lock()
+		b.commitErr = err
+		//b.errMutex.Unlock()
 	} else {
 		//logutil.BgLogger().Info("MYLOG check commit no err")
 	}
 	b.Clear()
-	b.freeReady.Broadcast()
+	//b.freeReady.Broadcast()
 }
