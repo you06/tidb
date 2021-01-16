@@ -96,21 +96,21 @@ func (s *testAsyncCommitCommon) mustGetLock(c *C, key []byte) *Lock {
 }
 
 func (s *testAsyncCommitCommon) mustPointGet(c *C, key, expectedValue []byte) {
-	snap := s.store.GetSnapshot(kv.MaxVersion)
+	snap := s.store.GetSnapshot(kv.MaxVersion, 0)
 	value, err := snap.Get(context.Background(), key)
 	c.Assert(err, IsNil)
 	c.Assert(value, BytesEquals, expectedValue)
 }
 
 func (s *testAsyncCommitCommon) mustGetFromSnapshot(c *C, version uint64, key, expectedValue []byte) {
-	snap := s.store.GetSnapshot(kv.Version{Ver: version})
+	snap := s.store.GetSnapshot(kv.Version{Ver: version}, 0)
 	value, err := snap.Get(context.Background(), key)
 	c.Assert(err, IsNil)
 	c.Assert(value, BytesEquals, expectedValue)
 }
 
 func (s *testAsyncCommitCommon) mustGetNoneFromSnapshot(c *C, version uint64, key []byte) {
-	snap := s.store.GetSnapshot(kv.Version{Ver: version})
+	snap := s.store.GetSnapshot(kv.Version{Ver: version}, 0)
 	_, err := snap.Get(context.Background(), key)
 	c.Assert(errors.Cause(err), Equals, kv.ErrNotExist)
 }

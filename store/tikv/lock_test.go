@@ -162,7 +162,7 @@ func (s *testLockSuite) TestScanLockResolveWithBatchGet(c *C) {
 
 	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
-	snapshot := newTiKVSnapshot(s.store, ver, 0)
+	snapshot := newTiKVSnapshot(s.store, ver, 0, 0)
 	m, err := snapshot.BatchGet(context.Background(), keys)
 	c.Assert(err, IsNil)
 	c.Assert(len(m), Equals, int('z'-'a'+1))

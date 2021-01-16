@@ -38,7 +38,7 @@ func (s testFaultInjectionSuite) TestFaultInjectionBasic(c *C) {
 	_, err = storage.BeginWithStartTS(oracle.GlobalTxnScope, 0)
 	c.Assert(err, IsNil)
 	ver := Version{Ver: 1}
-	snap := storage.GetSnapshot(ver)
+	snap := storage.GetSnapshot(ver, 0)
 	b, err := txn.Get(context.TODO(), []byte{'a'})
 	c.Assert(err.Error(), Equals, err1.Error())
 	c.Assert(b, IsNil)
@@ -63,7 +63,7 @@ func (s testFaultInjectionSuite) TestFaultInjectionBasic(c *C) {
 	storage = NewInjectedStore(newMockStorage(), &cfg)
 	txn, err = storage.Begin()
 	c.Assert(err, IsNil)
-	snap = storage.GetSnapshot(ver)
+	snap = storage.GetSnapshot(ver, 0)
 
 	b, err = txn.Get(context.TODO(), []byte{'a'})
 	c.Assert(err, IsNil)

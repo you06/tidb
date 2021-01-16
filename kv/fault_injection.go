@@ -73,8 +73,8 @@ func (s *InjectedStore) BeginWithStartTS(txnScope string, startTS uint64) (Trans
 }
 
 // GetSnapshot creates an injected Snapshot.
-func (s *InjectedStore) GetSnapshot(ver Version) Snapshot {
-	snapshot := s.Storage.GetSnapshot(ver)
+func (s *InjectedStore) GetSnapshot(ver Version, startTS uint64) Snapshot {
+	snapshot := s.Storage.GetSnapshot(ver, 0)
 	return &InjectedSnapshot{
 		Snapshot: snapshot,
 		cfg:      s.cfg,

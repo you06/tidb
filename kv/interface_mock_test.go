@@ -174,7 +174,7 @@ func (s *mockStorage) BeginWithExactStaleness(txnScope string, prevSec uint64) (
 	return s.Begin()
 }
 
-func (s *mockStorage) GetSnapshot(ver Version) Snapshot {
+func (s *mockStorage) GetSnapshot(ver Version, startTS uint64) Snapshot {
 	return &mockSnapshot{
 		store: newMemDB(),
 	}

@@ -296,7 +296,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 	c.Assert(n, Equals, int64(2))
 	txn.Commit(context.Background())
 
-	snapshot := store.GetSnapshot(ver1)
+	snapshot := store.GetSnapshot(ver1, 0)
 	snapMeta := meta.NewSnapshotMeta(snapshot)
 	n, _ = snapMeta.GetGlobalID()
 	c.Assert(n, Equals, int64(1))

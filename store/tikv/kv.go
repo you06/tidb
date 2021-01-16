@@ -359,8 +359,8 @@ func (s *tikvStore) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv
 	return txn, nil
 }
 
-func (s *tikvStore) GetSnapshot(ver kv.Version) kv.Snapshot {
-	snapshot := newTiKVSnapshot(s, ver, s.nextReplicaReadSeed())
+func (s *tikvStore) GetSnapshot(ver kv.Version, startTS uint64) kv.Snapshot {
+	snapshot := newTiKVSnapshot(s, ver, s.nextReplicaReadSeed(), startTS)
 	return snapshot
 }
 

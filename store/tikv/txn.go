@@ -99,7 +99,7 @@ func newTiKVTxn(store *tikvStore, txnScope string) (*tikvTxn, error) {
 // newTiKVTxnWithStartTS creates a txn with startTS.
 func newTiKVTxnWithStartTS(store *tikvStore, txnScope string, startTS uint64, replicaReadSeed uint32) (*tikvTxn, error) {
 	ver := kv.NewVersion(startTS)
-	snapshot := newTiKVSnapshot(store, ver, replicaReadSeed)
+	snapshot := newTiKVSnapshot(store, ver, replicaReadSeed, startTS)
 	newTiKVTxn := &tikvTxn{
 		snapshot:  snapshot,
 		us:        kv.NewUnionStore(snapshot),
@@ -248,6 +248,9 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if val != nil {
 		connID = val.(uint64)
 	}
+	//if connID > 0 {
+	//	logutil.Logger(ctx).Info("MYLOG Call Commit", zap.Uint64("startTS", txn.startTS))
+	//}
 
 	var (
 		err                       error
@@ -259,7 +262,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// If the txn use pessimistic lock, committer is initialized.
 	committer := txn.committer
 	if committer == nil {
-		if isDeterministic || pessimistic2Deterministic {
+		if isDeterministic {
 			committer, err = newDeterministicCommitter(txn, connID)
 		} else {
 			committer, err = newTwoPhaseCommitter(txn, connID)

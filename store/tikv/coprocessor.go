@@ -983,7 +983,7 @@ func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID
 		sender.storeAddr = directStoreAddr
 	}
 	sender.Stats = ch.Stats
-	req.Context.ResolvedLocks = ch.minCommitTSPushed.Get()
+	req.Context.ResolvedLocks = append(req.Context.ResolvedLocks, ch.minCommitTSPushed.Get()...)
 	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, timeout, sType)
 	return resp, ctx, sender.storeAddr, err
 }

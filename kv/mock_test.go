@@ -31,7 +31,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	storage.UUID()
 	version, err := storage.CurrentVersion(oracle.GlobalTxnScope)
 	c.Check(err, IsNil)
-	snapshot := storage.GetSnapshot(version)
+	snapshot := storage.GetSnapshot(version, 0)
 	_, err = snapshot.BatchGet(context.Background(), []Key{Key("abc"), Key("def")})
 	c.Check(err, IsNil)
 	snapshot.SetOption(Priority, PriorityNormal)

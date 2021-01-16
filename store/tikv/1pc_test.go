@@ -137,7 +137,7 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	values := [][]byte{v1, v2, v3, v4, v5, v6New}
 	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
-	snap := s.store.GetSnapshot(ver)
+	snap := s.store.GetSnapshot(ver, 0)
 	for i, k := range keys {
 		v, err := snap.Get(ctx, k)
 		c.Assert(err, IsNil)
@@ -223,7 +223,7 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 
 	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
-	snap := s.store.GetSnapshot(ver)
+	snap := s.store.GetSnapshot(ver, 0)
 	for i, k := range keys {
 		v, err := snap.Get(ctx, []byte(k))
 		c.Assert(err, IsNil)

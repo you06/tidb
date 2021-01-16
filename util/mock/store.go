@@ -51,7 +51,7 @@ func (s *Store) BeginWithExactStaleness(txnScope string, prevSec uint64) (kv.Tra
 }
 
 // GetSnapshot implements kv.Storage interface.
-func (s *Store) GetSnapshot(ver kv.Version) kv.Snapshot { return nil }
+func (s *Store) GetSnapshot(ver kv.Version, startTS uint64) kv.Snapshot { return nil }
 
 // Close implements kv.Storage interface.
 func (s *Store) Close() error { return nil }

@@ -281,6 +281,9 @@ func (b *batchManager) writeCheckpointStart() {
 	//time.Sleep(time.Second)
 	b.startTS, b.startErr = b.store.getTimestampWithRetry(bo, oracle.GlobalTxnScope)
 	b.commitTS = b.startTS + 1
+	if b.IsPessimisticBatch {
+		return
+	}
 
 	b.freeMutex.Lock()
 	// may wait before
@@ -288,6 +291,7 @@ func (b *batchManager) writeCheckpointStart() {
 	if b.before != nil {
 		for atomic.LoadUint32(&b.before.state) < batchStateLocking {
 		}
+		b.before = nil
 	}
 	b.polling.SetManager(b.startTS, b)
 	atomic.StoreUint32(&b.state, batchStateExecuting)
@@ -332,6 +336,7 @@ func (b *batchManager) mergeMutations() {
 	b.keyStartTSReady.Add(len(b.txns))
 	b.key2StartTS = make(map[string]uint64, b.keyLen)
 	for txn := range b.txns {
+		//logutil.BgLogger().Info("MYLOG merge mutations", zap.Uint64("startTS", txn.startTS))
 		mutation := txn.committer.GetMutations()
 		go func(mutation *memBufferMutations, start int, startTS uint64) {
 			for i := 0; i < mutation.Len(); i++ {
@@ -343,7 +348,13 @@ func (b *batchManager) mergeMutations() {
 			if b.IsPessimisticBatch {
 				lock.Lock()
 				for i := 0; i < mutation.Len(); i++ {
-					b.key2StartTS[hex.EncodeToString(mutation.GetKey(i))] = startTS
+					op := mutation.GetOp(i)
+					if op == pb.Op_Lock || op == pb.Op_Put || op == pb.Op_Insert || op == pb.Op_Del {
+						b.key2StartTS[hex.EncodeToString(mutation.GetKey(i))] = startTS
+						//logutil.BgLogger().Info("MYLOG lock key", zap.String("key", kv.Key(mutation.GetKey(i)).String()), zap.Uint64("startTS", startTS), zap.String("op", op.String()))
+					} else {
+						//logutil.BgLogger().Info("MYLOG not lock key", zap.String("key", kv.Key(mutation.GetKey(i)).String()), zap.Uint64("startTS", startTS))
+					}
 				}
 				lock.Unlock()
 			}

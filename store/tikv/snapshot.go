@@ -54,6 +54,7 @@ var (
 // tikvSnapshot implements the kv.Snapshot interface.
 type tikvSnapshot struct {
 	store           *tikvStore
+	originVer       uint64
 	version         kv.Version
 	isolationLevel  kv.IsoLevel
 	priority        pb.CommandPri
@@ -84,7 +85,7 @@ type tikvSnapshot struct {
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
-func newTiKVSnapshot(store *tikvStore, ver kv.Version, replicaReadSeed uint32) *tikvSnapshot {
+func newTiKVSnapshot(store *tikvStore, ver kv.Version, replicaReadSeed uint32, startTS uint64) *tikvSnapshot {
 	// Sanity check for snapshot version.
 	if ver.Ver >= math.MaxInt64 && ver.Ver != math.MaxUint64 {
 		err := errors.Errorf("try to get snapshot with a large ts %d", ver.Ver)
@@ -92,6 +93,7 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version, replicaReadSeed uint32) *
 	}
 	return &tikvSnapshot{
 		store:           store,
+		originVer:       startTS,
 		version:         ver,
 		priority:        pb.CommandPri_Normal,
 		vars:            kv.DefaultVars,
@@ -281,13 +283,19 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 	pending := batch.keys
 	for {
 		s.mu.RLock()
+		var resolvedLocks []uint64
+		if s.originVer != s.version.Ver && s.originVer != 0 {
+			resolvedLocks = []uint64{s.originVer}
+		}
 		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
 			Keys:    pending,
 			Version: s.version.Ver,
+			StartTs: s.originVer,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
-			Priority:     s.priority,
-			NotFillCache: s.notFillCache,
-			TaskId:       s.mu.taskID,
+			Priority:      s.priority,
+			NotFillCache:  s.notFillCache,
+			TaskId:        s.mu.taskID,
+			ResolvedLocks: resolvedLocks,
 		})
 		s.mu.RUnlock()
 
@@ -331,6 +339,10 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 					collectF(pair.GetKey(), pair.GetValue())
 					continue
 				}
+				//logutil.BgLogger().Info("MYLOG batch point get key err",
+				//	zap.String("key err", keyErr.String()),
+				//	zap.Uint64("version", s.version.Ver),
+				//	zap.Uint64("start ts", s.originVer))
 				lock, err := extractLockFromKeyErr(keyErr)
 				if err != nil {
 					return errors.Trace(err)
@@ -343,6 +355,9 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			s.mergeExecDetail(batchGetResp.ExecDetailsV2)
 		}
 		if len(lockedKeys) > 0 {
+			if Pessimistic2Deterministic {
+				continue
+			}
 			msBeforeExpired, err := cli.ResolveLocks(bo, s.version.Ver, locks)
 			if err != nil {
 				return errors.Trace(err)
@@ -425,14 +440,20 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			s.mergeRegionRequestStats(cli.Stats)
 		}()
 	}
+	var resolvedLocks []uint64
+	if s.originVer != s.version.Ver && s.originVer != 0 {
+		resolvedLocks = []uint64{s.originVer}
+	}
 	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet,
 		&pb.GetRequest{
 			Key:     k,
 			Version: s.version.Ver,
+			StartTs: s.originVer,
 		}, s.mu.replicaRead, &s.replicaReadSeed, pb.Context{
-			Priority:     s.priority,
-			NotFillCache: s.notFillCache,
-			TaskId:       s.mu.taskID,
+			Priority:      s.priority,
+			NotFillCache:  s.notFillCache,
+			TaskId:        s.mu.taskID,
+			ResolvedLocks: resolvedLocks,
 		})
 	s.mu.RUnlock()
 	for {
@@ -464,9 +485,16 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		}
 		val := cmdGetResp.GetValue()
 		if keyErr := cmdGetResp.GetError(); keyErr != nil {
+			//logutil.BgLogger().Info("MYLOG point get key err",
+			//	zap.String("key err", keyErr.String()),
+			//	zap.Uint64("version", s.version.Ver),
+			//	zap.Uint64("start ts", s.originVer))
 			lock, err := extractLockFromKeyErr(keyErr)
 			if err != nil {
 				return nil, errors.Trace(err)
+			}
+			if Pessimistic2Deterministic {
+				continue
 			}
 			msBeforeExpired, err := cli.ResolveLocks(bo, s.version.Ver, []*Lock{lock})
 			if err != nil {
