@@ -3,6 +3,7 @@ package tikv
 import (
 	"context"
 	"encoding/hex"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -360,15 +361,15 @@ func (b *batchManager) groupMutations(bo *Backoffer, mutations CommitterMutation
 
 func (b *batchManager) commit() error {
 	b.mergeMutations()
-	logutil.BgLogger().Info("MYLOG write locks", zap.Int("txn count", len(b.txns)))
-	bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, b.vars)
-	err := b.lockDeterministicGroups(bo, b.lockMutations)
-	if err != nil {
-		return err
-	}
+	//logutil.BgLogger().Info("MYLOG write locks", zap.Int("txn count", len(b.txns)))
+	//bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, b.vars)
+	//err := b.lockDeterministicGroups(bo, b.lockMutations)
+	//if err != nil {
+	//	return err
+	//}
 	logutil.BgLogger().Info("MYLOG start commit")
-	bo = NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, b.vars)
-	err = b.writeDeterministicGroups(bo, b.mutations)
+	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, b.vars)
+	err := b.writeDeterministicGroups(bo, b.mutations)
 
 	return err
 }
@@ -456,7 +457,9 @@ func (b *batchManager) writeDeterministic(bo *Backoffer, wg *sync.WaitGroup, bat
 				//logutil.BgLogger().Info("MYLOG, resp got no err")
 			} else {
 				for _, err := range errs {
-					logutil.BgLogger().Info("MYLOG, resp err", zap.Stringer("err", err))
+					if !strings.Contains(err.String(), "TxnLockNotFound") {
+						logutil.BgLogger().Info("MYLOG, resp err", zap.Stringer("err", err))
+					}
 				}
 			}
 		}
