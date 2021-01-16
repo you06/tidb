@@ -271,6 +271,9 @@ func (b *batchManager) writeCheckpointStart() {
 	b.commitTS = b.startTS + 1
 
 	b.freeMutex.Lock()
+	// may wait before
+	// important to release the pointer, this avoid memory leak
+	b.before = nil
 	b.polling.SetManager(b.startTS, b)
 	atomic.StoreUint32(&b.state, batchStateExecuting)
 	b.txnCount = b.futureCount

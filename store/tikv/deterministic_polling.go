@@ -5,6 +5,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
@@ -77,6 +80,9 @@ func (b *batchManagerPolling) SetManager(ts uint64, bm *batchManager) {
 
 func (b *batchManagerPolling) DelManager(ts uint64) {
 	b.rwlock.Lock()
+	if _, ok := b.bms[ts]; !ok {
+		logutil.BgLogger().Info("MYLOG DelManager bm not found", zap.Uint64("ts", ts))
+	}
 	delete(b.bms, ts)
 	b.rwlock.Unlock()
 }
