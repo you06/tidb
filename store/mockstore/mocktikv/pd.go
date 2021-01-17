@@ -196,3 +196,7 @@ func (c *pdClient) GetAllMembers(ctx context.Context) ([]*pdpb.Member, error) {
 }
 
 func (c *pdClient) GetLeaderAddr() string { return "mockpd" }
+
+func (c *pdClient) SetCheckpoint(ctx context.Context, startTS uint64, state pdpb.CheckpointRequestType, ts uint64) error {
+	return nil
+}

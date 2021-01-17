@@ -93,5 +93,5 @@ go 1.13
 replace (
 	github.com/ngaut/unistore => github.com/you06/unistore v0.0.0-20210116164317-aec007b86a8e
 	github.com/pingcap/kvproto => github.com/you06/kvproto v0.0.0-20210116164004-55537ad73cd9
-	//github.com/tikv/pd => github.com/MyonKeminta/pd v1.1.0-beta.0.20210116173721-27b067aefb14
+	github.com/tikv/pd => github.com/MyonKeminta/pd v1.1.0-beta.0.20210117042551-80ebe572fb35
 )

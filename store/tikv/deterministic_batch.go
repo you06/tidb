@@ -5,7 +5,8 @@ import (
 	"encoding/hex"
 	"sync"
 	"sync/atomic"
-	"time"
+
+	"github.com/pingcap/kvproto/pkg/pdpb"
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -151,7 +152,7 @@ func (b *batchManager) NextBatch(ctx context.Context) oracle.Future {
 }
 
 func (b *batchManager) Clear() {
-	logutil.BgLogger().Info("MYLOG wait clear ready", zap.Uint64("start ts", b.startTS))
+	//logutil.BgLogger().Info("MYLOG wait clear ready", zap.Uint64("start ts", b.startTS))
 	b.clearReady.Wait()
 	b.freeMutex.Lock()
 	atomic.StoreUint32(&b.state, batchStateCommitDone)
@@ -277,9 +278,13 @@ func (b *batchManager) writeCheckpointStart() {
 
 	bo := b.newCheckpointBackOffer()
 
-	time.Sleep(1000 * time.Microsecond)
+	//time.Sleep(1000 * time.Microsecond)
 	//time.Sleep(time.Second)
 	b.startTS, b.startErr = b.store.getTimestampWithRetry(bo, oracle.GlobalTxnScope)
+	if b.startErr != nil {
+		return
+	}
+	b.startErr = b.store.pdClient.SetCheckpoint(context.Background(), b.startTS, pdpb.CheckpointRequestType_CheckpointStart, b.startTS)
 	b.commitTS = b.startTS + 1
 	if b.IsPessimisticBatch {
 		return
@@ -302,12 +307,13 @@ func (b *batchManager) writeCheckpointStart() {
 	b.startReady.Broadcast()
 	b.startMutex.Unlock()
 
-	logutil.BgLogger().Info("MYLOG got startTS",
-		zap.Uint64("startTS", b.startTS),
-		zap.Uint32("txn count", b.txnCount))
+	//logutil.BgLogger().Info("MYLOG got startTS",
+	//	zap.Uint64("startTS", b.startTS),
+	//	zap.Uint32("txn count", b.txnCount))
 }
 
 func (b *batchManager) writeCheckpointCommit() error {
+	b.store.pdClient.SetCheckpoint(context.Background(), b.startTS, pdpb.CheckpointRequestType_CheckpointCommit, b.commitTS)
 	return nil
 }
 
@@ -422,7 +428,7 @@ func (b *batchManager) commit() error {
 			b.mergeMutations()
 		}
 	}
-	logutil.BgLogger().Info("MYLOG start commit")
+	//logutil.BgLogger().Info("MYLOG start commit")
 	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, b.vars)
 	err := b.writeDeterministicGroups(bo, b.mutations)
 
@@ -431,10 +437,10 @@ func (b *batchManager) commit() error {
 
 func (b *batchManager) commitDirectly() {
 	var (
-		bo    *Backoffer
-		start = time.Now()
+		bo *Backoffer
+		//start = time.Now()
 	)
-	logutil.BgLogger().Info("MYLOG start commit directly")
+	//logutil.BgLogger().Info("MYLOG start commit directly")
 	b.writeCheckpointStart()
 	if b.startErr != nil {
 		b.commitErr = b.startErr
@@ -443,8 +449,11 @@ func (b *batchManager) commitDirectly() {
 	b.mergeMutations()
 	bo = NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, b.vars)
 	b.commitErr = b.writeDeterministicGroups(bo, b.mutations)
-	logutil.BgLogger().Info("MYLOG start commit directly done", zap.Duration("cost", time.Since(start)))
+	//logutil.BgLogger().Info("MYLOG start commit directly done", zap.Duration("cost", time.Since(start)))
 RESULT:
+	if b.commitErr == nil {
+		b.writeCheckpointCommit()
+	}
 	b.freeMutex.Lock()
 	atomic.StoreUint32(&b.state, batchStateCommitDone)
 	b.freeReady.Broadcast()
@@ -775,7 +784,7 @@ func (b *batchManager) detectConflicts() {
 		}(i)
 	}
 	wg.Wait()
-	logutil.BgLogger().Info("MYLOG detect conflict done")
+	//logutil.BgLogger().Info("MYLOG detect conflict done")
 
 	b.keyLen = int(keyLen)
 

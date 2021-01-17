@@ -14,7 +14,7 @@ import (
 const (
 	DeterministicPoolSize            = 4
 	DeterministicMaxBatchSize uint32 = 128
-	FlushDuration                    = 50 * time.Millisecond
+	FlushDuration                    = 40 * time.Millisecond
 )
 
 type batchManagerPolling struct {
@@ -43,11 +43,11 @@ func newBatchManagerPolling(store *tikvStore, count int) (*batchManagerPolling, 
 
 func (b *batchManagerPolling) CheckFlush() {
 	var (
-		beforeBatchStatus            uint32
-		beforeRound                  int
-		beforePessimisticBatchStatus uint32
-		beforePessimisticRound       int
-		ticker                       = time.NewTicker(FlushDuration)
+		beforeBatchStatus uint32
+		beforeRound       int
+		//beforePessimisticBatchStatus uint32
+		//beforePessimisticRound       int
+		ticker = time.NewTicker(FlushDuration)
 	)
 	for {
 		<-ticker.C
@@ -62,15 +62,16 @@ func (b *batchManagerPolling) CheckFlush() {
 		b.Unlock()
 
 		b.pessimisticMu.Lock()
-		if b.pessimisticBatchStatus > 0 &&
-			b.pessimisticBatchStatus == beforePessimisticBatchStatus &&
-			b.pessimisticRound == beforePessimisticRound {
+		//if b.pessimisticBatchStatus > 0 &&
+		//	b.pessimisticBatchStatus == beforePessimisticBatchStatus &&
+		//	b.pessimisticRound == beforePessimisticRound {
+		if b.pessimisticBatchStatus > 0 {
 			b.pessimisticBatchStatus = 0
 			b.round++
 			go b.pessimisticManager.commitDirectly()
 		}
-		beforePessimisticBatchStatus = b.pessimisticBatchStatus
-		beforePessimisticRound = b.pessimisticRound
+		//beforePessimisticBatchStatus = b.pessimisticBatchStatus
+		//beforePessimisticRound = b.pessimisticRound
 		b.pessimisticMu.Unlock()
 	}
 }
