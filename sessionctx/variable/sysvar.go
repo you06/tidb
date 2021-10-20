@@ -1098,7 +1098,7 @@ var defaultSysVars = []*SysVar{
 		return normalizedValue, nil
 	}},
 	// Deprecated: tidb_enable_streaming
-	{Scope: ScopeSession, Name: TiDBEnableStreaming, Value: Off, Type: TypeBool, skipInit: true, Hidden: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableStreaming, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableStreaming = TiDBOptOn(val)
 		return nil
 	}},

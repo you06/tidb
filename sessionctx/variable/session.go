@@ -1225,13 +1225,13 @@ func NewSessionVars() *SessionVars {
 		MaxChunkSize:       DefMaxChunkSize,
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
-	var enableStreaming string
-	if config.GetGlobalConfig().EnableStreaming {
-		enableStreaming = "1"
-	} else {
-		enableStreaming = "0"
-	}
-	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
+	//var enableStreaming string
+	//if config.GetGlobalConfig().EnableStreaming {
+	//	enableStreaming = "1"
+	//} else {
+	//	enableStreaming = "0"
+	//}
+	//terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution

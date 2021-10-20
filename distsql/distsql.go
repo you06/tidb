@@ -74,9 +74,9 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		hook.(func(*kv.Request))(kvReq)
 	}
 
-	//if !sctx.GetSessionVars().EnableStreaming {
-	//	kvReq.Streaming = false
-	//}
+	if !sctx.GetSessionVars().EnableStreaming {
+		kvReq.Streaming = false
+	}
 	enabledRateLimitAction := sctx.GetSessionVars().EnabledRateLimitAction
 	originalSQL := sctx.GetSessionVars().StmtCtx.OriginalSQL
 	eventCb := func(event trxevents.TransactionEvent) {
