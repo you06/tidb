@@ -1850,6 +1850,10 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "version_compile_os", Value: runtime.GOOS},
 	{Scope: ScopeNone, Name: "version_compile_machine", Value: runtime.GOARCH},
 	{Scope: ScopeNone, Name: TiDBAllowFunctionForExpressionIndex, ReadOnly: true, Value: collectAllowFuncName4ExpressionIndex()},
+	{Scope: ScopeSession, Name: TiDBEnablePaging, Value: Off, Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePaging = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 func collectAllowFuncName4ExpressionIndex() string {

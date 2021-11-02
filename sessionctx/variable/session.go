@@ -960,6 +960,9 @@ type SessionVars struct {
 	EnableMPPBalanceWithContinuousRegion bool
 	// EnableMPPBalanceWithContinuousRegionCount indicates the continuous region count that balance logic assigns to a TiFlash instance each time.
 	EnableMPPBalanceWithContinuousRegionCount int64
+
+	// EnablePaging indicates whether enable paging in coprocessor requests.
+	EnablePaging bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
