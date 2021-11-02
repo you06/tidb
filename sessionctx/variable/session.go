@@ -954,6 +954,9 @@ type SessionVars struct {
 		curr int8
 		data [2]stmtctx.StatementContext
 	}
+
+	// EnablePaging indicates whether enable paging in coprocessor requests.
+	EnablePaging bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

@@ -367,6 +367,8 @@ type IndexLookUpExecutor struct {
 	indexStreaming bool
 	tableStreaming bool
 
+	enablePaging bool
+
 	corColInIdxSide bool
 	corColInTblSide bool
 	corColInAccess  bool
