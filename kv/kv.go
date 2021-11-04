@@ -19,6 +19,8 @@ import (
 	"crypto/tls"
 	"time"
 
+	"github.com/pingcap/tipb/go-tipb"
+
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -337,6 +339,10 @@ type Request struct {
 	MatchStoreLabels []*metapb.StoreLabel
 	// ResourceGroupTag indicates the kv request task group.
 	ResourceGroupTag []byte
+	// Paging indicates whether the request is a paging request.
+	Paging bool
+	// DAG for paging usage.
+	DAG *tipb.DAGRequest
 }
 
 const (
