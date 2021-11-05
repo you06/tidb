@@ -368,6 +368,7 @@ type IndexLookUpExecutor struct {
 	tableStreaming bool
 
 	indexPaging bool
+	tablePaging bool
 
 	corColInIdxSide bool
 	corColInTblSide bool
@@ -654,14 +655,16 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		table = task.partitionTable
 	}
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:        newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
-		table:               table,
-		dagPB:               e.tableRequest,
-		startTS:             e.startTS,
-		readReplicaScope:    e.readReplicaScope,
-		isStaleness:         e.isStaleness,
-		columns:             e.columns,
-		streaming:           e.tableStreaming,
+		baseExecutor:     newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
+		table:            table,
+		dagPB:            e.tableRequest,
+		startTS:          e.startTS,
+		readReplicaScope: e.readReplicaScope,
+		isStaleness:      e.isStaleness,
+		columns:          e.columns,
+		streaming:        e.tableStreaming,
+		paging:           e.tablePaging,
+
 		feedback:            statistics.NewQueryFeedback(0, nil, 0, false),
 		corColInFilter:      e.corColInTblSide,
 		plans:               e.tblPlans,
