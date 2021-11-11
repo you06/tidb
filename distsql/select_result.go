@@ -214,35 +214,35 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			}
 			return nil
 		}
-		r.selectResp = new(tipb.SelectResponse)
-		err = r.selectResp.Unmarshal(resultSubset.GetData())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		respSize := int64(r.selectResp.Size())
-		atomic.StoreInt64(&r.selectRespSize, respSize)
-		r.memConsume(respSize)
-		if err := r.selectResp.Error; err != nil {
-			return dbterror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
-		}
-		sessVars := r.ctx.GetSessionVars()
-		if atomic.LoadUint32(&sessVars.Killed) == 1 {
-			return errors.Trace(errQueryInterrupted)
-		}
-		sc := sessVars.StmtCtx
-		for _, warning := range r.selectResp.Warnings {
-			sc.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
-		}
-		if r.feedback != nil {
-			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts, r.selectResp.Ndvs)
-		}
-		r.partialCount++
 
 		r.mu.Lock()
 		if r.exit {
 			r.mu.Unlock()
 			break
 		} else {
+			r.selectResp = new(tipb.SelectResponse)
+			err = r.selectResp.Unmarshal(resultSubset.GetData())
+			if err != nil {
+				return errors.Trace(err)
+			}
+			respSize := int64(r.selectResp.Size())
+			atomic.StoreInt64(&r.selectRespSize, respSize)
+			r.memConsume(respSize)
+			if err := r.selectResp.Error; err != nil {
+				return dbterror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
+			}
+			sessVars := r.ctx.GetSessionVars()
+			if atomic.LoadUint32(&sessVars.Killed) == 1 {
+				return errors.Trace(errQueryInterrupted)
+			}
+			sc := sessVars.StmtCtx
+			for _, warning := range r.selectResp.Warnings {
+				sc.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
+			}
+			if r.feedback != nil {
+				r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts, r.selectResp.Ndvs)
+			}
+			r.partialCount++
 			hasStats, ok := resultSubset.(CopRuntimeStats)
 			if ok {
 				copStats := hasStats.GetCopRuntimeStats()

@@ -1223,8 +1223,14 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 // executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
 // Then we hold the returning rows and finish this task.
 func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) error {
-	tableReader, err := w.idxLookup.buildTableReader(ctx, task)
 	w.mu.Lock()
+	select {
+	case <-w.finished:
+		w.mu.Unlock()
+		return nil
+	default:
+	}
+	tableReader, err := w.idxLookup.buildTableReader(ctx, task)
 	w.tableReader = tableReader
 	w.mu.Unlock()
 	if err != nil {
