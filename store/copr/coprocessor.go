@@ -840,6 +840,15 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, rpcCtx *ti
 			return remainedTasks, errors.Trace(err)
 		}
 		resp, err = stream.Recv()
+		failpoint.Inject("streamRecvErr", func(val failpoint.Value) {
+			if val.(bool) {
+				// fail from the second receive
+				if lastRange != nil {
+					resp = nil
+					err = errors.New("recv stream mock error")
+				}
+			}
+		})
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
 				return nil, nil
