@@ -360,6 +360,7 @@ type IndexLookUpExecutor struct {
 	indexStreaming bool
 	tableStreaming bool
 	indexPaging    bool
+	tablePaging    bool
 
 	corColInIdxSide bool
 	corColInTblSide bool
@@ -659,6 +660,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		isStaleness:         e.isStaleness,
 		columns:             e.columns,
 		streaming:           e.tableStreaming,
+		paging:              e.tablePaging,
 		feedback:            statistics.NewQueryFeedback(0, nil, 0, false),
 		corColInFilter:      e.corColInTblSide,
 		plans:               e.tblPlans,

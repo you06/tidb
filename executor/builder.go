@@ -3363,14 +3363,17 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	if err != nil {
 		return nil, err
 	}
-	indexPaging := false
-	if b.ctx.GetSessionVars().EnablePaging {
-		indexStreaming = false
-		indexPaging = true
-	}
 	tableReq, tableStreaming, tbl, err := buildTableReq(b, v.Schema().Len(), v.TablePlans)
 	if err != nil {
 		return nil, err
+	}
+	indexPaging := false
+	tablePaging := false
+	if b.ctx.GetSessionVars().EnablePaging {
+		indexStreaming = false
+		indexPaging = true
+		tableStreaming = false
+		tablePaging = true
 	}
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	startTS, err := b.getSnapshotTS()
@@ -3390,6 +3393,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		indexStreaming:    indexStreaming,
 		tableStreaming:    tableStreaming,
 		indexPaging:       indexPaging,
+		tablePaging:       tablePaging,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
 		corColInIdxSide:   b.corColInDistPlan(v.IndexPlans),
 		corColInTblSide:   b.corColInDistPlan(v.TablePlans),
@@ -3851,6 +3855,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
+		SetPaging(e.paging).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
