@@ -433,12 +433,19 @@ const (
 	oneShotUse
 )
 
+// ReadConsistencyLevel is the level of read consistency.
 type ReadConsistencyLevel string
 
 const (
+	// ReadConsistencyStrict means read by strict consistency, default value.
 	ReadConsistencyStrict ReadConsistencyLevel = "strict"
-	ReadConsistencyWeak   ReadConsistencyLevel = "weak"
+	// ReadConsistencyWeak means read can be weak consistency.
+	ReadConsistencyWeak ReadConsistencyLevel = "weak"
 )
+
+func (r ReadConsistencyLevel) IsWeak() bool {
+	return r == ReadConsistencyWeak
+}
 
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {

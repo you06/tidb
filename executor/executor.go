@@ -1734,7 +1734,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		}
 		if s, ok := prepareStmt.PreparedAst.Stmt.(*ast.SelectStmt); ok {
 			if s.LockInfo == nil {
-				sc.WeakConsistency = ctx.GetSessionVars().IsAutocommit() && ctx.GetSessionVars().ReadConsistency == "weak"
+				sc.WeakConsistency = ctx.GetSessionVars().IsAutocommit() && ctx.GetSessionVars().ReadConsistency.IsWeak()
 			}
 		}
 	}
@@ -1810,7 +1810,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.Priority = opts.Priority
 			sc.NotFillCache = !opts.SQLCache
 		}
-		sc.WeakConsistency = ctx.GetSessionVars().IsAutocommit() && ctx.GetSessionVars().ReadConsistency == "weak"
+		sc.WeakConsistency = ctx.GetSessionVars().IsAutocommit() && ctx.GetSessionVars().ReadConsistency.IsWeak()
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
 		sc.OverflowAsWarning = true
