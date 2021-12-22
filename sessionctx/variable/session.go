@@ -433,6 +433,13 @@ const (
 	oneShotUse
 )
 
+type ReadConsistencyLevel string
+
+const (
+	ReadConsistencyStrict ReadConsistencyLevel = "strict"
+	ReadConsistencyWeak   ReadConsistencyLevel = "weak"
+)
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -980,6 +987,9 @@ type SessionVars struct {
 	// all the local data in each session, and finally report them to the remote
 	// regularly.
 	StmtStats *stmtstats.StatementStats
+
+	// ReadConsistency indicates the read consistency requirement.
+	ReadConsistency ReadConsistencyLevel
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

@@ -214,6 +214,9 @@ type StatementContext struct {
 	// Its life cycle is limited to this execution, and a new KvExecCounter is
 	// always created during each statement execution.
 	KvExecCounter *stmtstats.KvExecCounter
+
+	// WeakConsistency is on when read consistency is weak and in a read statement.
+	WeakConsistency bool
 }
 
 // StmtHints are SessionVars related sql hints.

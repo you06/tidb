@@ -138,6 +138,11 @@ func (req *requestCtx) getDBReader() *dbreader.DBReader {
 	return req.reader
 }
 
+// rc returns if the request is a TiKV rc read
+func (req *requestCtx) rc() bool {
+	return req.rpcCtx.IsolationLevel == kvrpcpb.IsolationLevel_RC
+}
+
 func (req *requestCtx) finish() {
 	atomic.AddInt32(&req.svr.refCount, -1)
 	if req.reader != nil {

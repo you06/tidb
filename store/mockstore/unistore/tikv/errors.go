@@ -132,3 +132,10 @@ type ErrTxnNotFound struct {
 func (e *ErrTxnNotFound) Error() string {
 	return "txn not found"
 }
+
+// ErrRCInvalidTS is returned if there is a request use RC isolation level with non MaxUint64 ts.
+type ErrRCInvalidTS uint64
+
+func (e ErrRCInvalidTS) Error() string {
+	return fmt.Sprintf("expect rc's ts MaxUint64, get %d", e)
+}

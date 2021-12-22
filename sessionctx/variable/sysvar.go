@@ -1325,6 +1325,15 @@ var defaultSysVars = []*SysVar{
 		s.EnablePaging = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBReadConsistency, Value: Off, Type: TypeStr, Hidden: true, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+		switch v := ReadConsistencyLevel(strings.ToLower(val)); v {
+		case ReadConsistencyStrict, ReadConsistencyWeak:
+			s.ReadConsistency = v
+		default:
+			return ErrWrongTypeForVar.GenWithStackByArgs(TiDBReadConsistency)
+		}
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

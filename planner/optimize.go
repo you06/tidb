@@ -145,7 +145,19 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			return fp, fp.OutputNames(), nil
 		}
 	}
-	sctx.PrepareTSFuture(ctx)
+	if sctx.GetSessionVars().StmtCtx.WeakConsistency {
+		startTs := uint64(math.MaxUint64)
+		if err := sctx.InitTxnWithStartTS(startTs); err != nil {
+			return nil, nil, err
+		}
+		txn, err := sctx.Txn(true)
+		if err != nil {
+			return nil, nil, err
+		}
+		txn.SetOption(kv.IsolationLevel, kv.RC)
+	} else {
+		sctx.PrepareTSFuture(ctx)
+	}
 
 	useBinding := sessVars.UsePlanBaselines
 	stmtNode, ok := node.(ast.StmtNode)

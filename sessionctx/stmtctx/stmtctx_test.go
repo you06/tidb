@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -89,4 +90,39 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 		got := tt.in.PushDownFlags()
 		require.Equal(t, tt.out, got)
 	}
+}
+
+func TestWeakConsistencyRead(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	getLastWeakConsistency := func(tk *testkit.TestKit) bool {
+		return tk.Session().GetSessionVars().StmtCtx.WeakConsistency
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, c int, c1 int, unique index i(c))")
+	// strict
+	tk.MustExec("insert into t values(1, 1, 1)")
+	require.False(t, getLastWeakConsistency(tk))
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
+	require.False(t, getLastWeakConsistency(tk))
+	tk.MustExec("prepare s from 'select * from t'")
+	tk.MustExec("prepare u from 'update t set c1 = id + 1'")
+	tk.MustQuery("execute s").Check(testkit.Rows("1 1 1"))
+	require.False(t, getLastWeakConsistency(tk))
+	tk.MustExec("execute u")
+	require.False(t, getLastWeakConsistency(tk))
+	// weak
+	tk.MustExec("set tidb_read_consistency = weak")
+	tk.MustExec("insert into t values(2, 2, 2)")
+	require.False(t, getLastWeakConsistency(tk))
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 2", "2 2 2"))
+	require.True(t, getLastWeakConsistency(tk))
+	tk.MustQuery("execute s").Check(testkit.Rows("1 1 2", "2 2 2"))
+	require.True(t, getLastWeakConsistency(tk))
+	tk.MustExec("execute u")
+	require.False(t, getLastWeakConsistency(tk))
 }
