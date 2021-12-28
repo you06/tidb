@@ -288,6 +288,10 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	isolationLevel := kv.SI
+	if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+		isolationLevel = kv.RC
+	}
 	var builder distsql.RequestBuilder
 	builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -299,6 +303,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
+		SetIsolationLevel(isolationLevel).
 		SetMemTracker(e.memTracker)
 	kvReq, err := builder.Build()
 	if err != nil {
@@ -555,6 +560,10 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			maxChunkSize:    e.maxChunkSize,
 			PushedLimit:     e.PushedLimit,
 		}
+		isolationLevel := kv.SI
+		if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+			isolationLevel = kv.RC
+		}
 		var builder distsql.RequestBuilder
 		builder.SetDAGRequest(e.dagPB).
 			SetStartTS(e.startTS).
@@ -566,7 +575,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetIsStaleness(e.isStaleness).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
-			SetMemTracker(tracker)
+			SetMemTracker(tracker).
+			SetIsolationLevel(isolationLevel)
 
 		for partTblIdx, kvRange := range kvRanges {
 			// check if executor is closed

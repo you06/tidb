@@ -242,6 +242,10 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		defer e.idxWorkerWg.Done()
 		util.WithRecovery(
 			func() {
+				isolationLevel := kv.SI
+				if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+					isolationLevel = kv.RC
+				}
 				var builder distsql.RequestBuilder
 				builder.SetDAGRequest(e.dagPBs[workID]).
 					SetStartTS(e.startTS).
@@ -252,7 +256,8 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetIsStaleness(e.isStaleness).
 					SetFromSessionVars(e.ctx.GetSessionVars()).
 					SetMemTracker(e.memTracker).
-					SetFromInfoSchema(e.ctx.GetInfoSchema())
+					SetFromInfoSchema(e.ctx.GetInfoSchema()).
+					SetIsolationLevel(isolationLevel)
 
 				worker := &partialIndexWorker{
 					stats:        e.stats,

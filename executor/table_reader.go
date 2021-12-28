@@ -320,6 +320,10 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, pids[i], true); err != nil {
 			return nil, err
 		}
+		isolationLevel := kv.SI
+		if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+			isolationLevel = kv.RC
+		}
 		var builder distsql.RequestBuilder
 		reqBuilder := builder.SetKeyRanges(kvRange)
 		kvReq, err := reqBuilder.
@@ -333,6 +337,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
 			SetMemTracker(e.memTracker).
 			SetStoreType(e.storeType).
+			SetIsolationLevel(isolationLevel).
 			SetAllowBatchCop(e.batchCop).Build()
 		if err != nil {
 			return nil, err
@@ -354,6 +359,10 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 	} else {
 		reqBuilder = builder.SetHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges, e.feedback)
 	}
+	isolationLevel := kv.SI
+	if e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+		isolationLevel = kv.RC
+	}
 	reqBuilder.
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
@@ -366,7 +375,8 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
-		SetAllowBatchCop(e.batchCop)
+		SetAllowBatchCop(e.batchCop).
+		SetIsolationLevel(isolationLevel)
 	return reqBuilder.Build()
 }
 

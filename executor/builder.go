@@ -3891,6 +3891,10 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	if err != nil {
 		return nil, err
 	}
+	isolationLevel := kv.SI
+	if builder.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+		isolationLevel = kv.RC
+	}
 	kvReq, err := reqBuilderWithRange.
 		SetDAGRequest(e.dagPB).
 		SetStartTS(startTS).
@@ -3901,6 +3905,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
+		SetIsolationLevel(isolationLevel).
 		Build()
 	if err != nil {
 		return nil, err
