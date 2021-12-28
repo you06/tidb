@@ -24,6 +24,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"math"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -2914,6 +2915,24 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 	if s.sessionVars.SnapshotTS != 0 {
 		// Do nothing when @@tidb_snapshot is set.
 		// In case the latest tso is misused.
+		return
+	}
+	if s.GetSessionVars().StmtCtx.WeakConsistency {
+		if s.txn.Valid() {
+			return
+		}
+		startTs := uint64(math.MaxUint64)
+		if err := s.InitTxnWithStartTS(startTs); err != nil {
+			logutil.Logger(ctx).Warn("init weak consistency txn error", zap.Error(err))
+			s.txn.changeToInvalid()
+			return
+		}
+		txn, err := s.Txn(true)
+		if err != nil {
+			logutil.Logger(ctx).Warn("unexpected active weak consistency txn error", zap.Error(err))
+			return
+		}
+		txn.SetOption(kv.IsolationLevel, kv.RC)
 		return
 	}
 	if !s.txn.validOrPending() {
