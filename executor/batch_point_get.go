@@ -308,18 +308,24 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			})
 		}
 
+		// SELECT * FROM t WHERE x IN (null), in this case there is no key.
+		if len(toFetchIndexKeys) == 0 {
+			return nil
+		}
+
 		// lock all keys in repeatable read isolation.
 		// for read consistency, only lock exist keys,
 		// indexKeys will be generated after getting handles.
 		if !rc {
+			if e.lock {
+				err = LockKeys(ctx, e.ctx, e.waitTime, toFetchIndexKeys...)
+				if err != nil {
+					return err
+				}
+			}
 			indexKeys = toFetchIndexKeys
 		} else {
 			indexKeys = make([]kv.Key, 0, len(toFetchIndexKeys))
-		}
-
-		// SELECT * FROM t WHERE x IN (null), in this case there is no key.
-		if len(toFetchIndexKeys) == 0 {
-			return nil
 		}
 
 		// Fetch all handles.
@@ -436,9 +442,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var values map[string][]byte
 	// Lock keys (include exists and non-exists keys) before fetch all values for Repeatable Read Isolation.
 	if e.lock && !rc {
-		lockKeys := make([]kv.Key, len(keys)+len(indexKeys))
+		lockKeys := make([]kv.Key, len(keys))
 		copy(lockKeys, keys)
-		copy(lockKeys[len(keys):], indexKeys)
 		err = LockKeys(ctx, e.ctx, e.waitTime, lockKeys...)
 		if err != nil {
 			return err
