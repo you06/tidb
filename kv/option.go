@@ -81,6 +81,8 @@ const (
 	TableToColumnMaps
 	// AssertionLevel controls how strict the assertions on data during transactions should be.
 	AssertionLevel
+	// SourceType set request source type of the current statement.
+	RequestSourceType
 )
 
 // ReplicaReadType is the type of replica to read data from
@@ -106,3 +108,8 @@ func (r ReplicaReadType) IsFollowerRead() bool {
 func (r ReplicaReadType) IsClosestRead() bool {
 	return r == ReplicaReadClosest
 }
+
+const (
+	InnerTxnDDLAddIndex = "ddl_add_index"
+	InnerTxnDDLDelIndex = "ddl_del_index"
+)

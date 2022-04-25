@@ -237,6 +237,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetRPCInterceptor(val.(interceptor.RPCInterceptor))
 	case kv.AssertionLevel:
 		txn.KVTxn.SetAssertionLevel(val.(kvrpcpb.AssertionLevel))
+	case kv.RequestSourceType:
+		txn.KVTxn.SetRequestSourceType(val.(string))
 	}
 }
 
