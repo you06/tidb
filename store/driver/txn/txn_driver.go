@@ -251,6 +251,10 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetAssertionLevel(val.(kvrpcpb.AssertionLevel))
 	case kv.TableToColumnMaps:
 		txn.columnMapsCache = val
+	case kv.RequestSourceInternal:
+		txn.KVTxn.SetRequestSourceInternal(val.(bool))
+	case kv.RequestSourceType:
+		txn.KVTxn.SetRequestSourceType(val.(string))
 	}
 }
 

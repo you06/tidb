@@ -47,7 +47,8 @@ func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 	for i := 0; i < count; i++ {
 		s := stmts[i]
 		wg.Run(func() {
-			_, _, err := se.ExecRestrictedStmt(context.Background(), s)
+			ctx := context.WithValue(context.Background(), kv.RequestSourceTypeKey, kv.InternalTxnOthers)
+			_, _, err := se.ExecRestrictedStmt(ctx, s)
 			require.NoError(t, err)
 		})
 	}

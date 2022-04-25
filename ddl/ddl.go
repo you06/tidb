@@ -271,6 +271,17 @@ func (dc *ddlCtx) setDDLLabelForTopSQL(job *model.Job) {
 	ctx.setDDLLabelForTopSQL(job)
 }
 
+func (dc *ddlCtx) setDDLSourceForDiagnosis(job *model.Job) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[job.ID]
+	if !exists {
+		ctx = NewJobContext()
+		dc.jobCtx.jobCtxMap[job.ID] = ctx
+	}
+	ctx.setDDLLabelForDiagnosis(job)
+}
+
 func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(job *model.Job) tikvrpc.ResourceGroupTagger {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
@@ -433,6 +444,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeKey, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
 	d := &ddl{
 		ddlCtx:            ddlCtx,

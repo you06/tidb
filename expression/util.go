@@ -23,6 +23,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/pingcap/tidb/kv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/ast"
@@ -1366,6 +1368,7 @@ func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues [
 // queries information_schema.statements_summary and information_schema.statements_summary_history; otherwise, it
 // queries the cluster version of these two tables.
 func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx sessionctx.Context, queryGlobal bool, inValues []interface{}) (map[string]string, error) {
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeKey, kv.InternalTxnOthers)
 	// If mock data is set, query the mock data instead of the real statements_summary tables.
 	if !queryGlobal && r.mockLocalData != nil {
 		return r.runMockQuery(r.mockLocalData, inValues)

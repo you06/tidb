@@ -3017,6 +3017,7 @@ func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error
 }
 
 func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeKey, kv.InternalTxnDDL)
 	validSpecs, err := resolveAlterTableSpec(sctx, specs)
 	if err != nil {
 		return errors.Trace(err)
@@ -7090,7 +7091,7 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 	// Initialize the cached table meta lock info in `mysql.table_cache_meta`.
 	// The operation shouldn't fail in most cases, and if it does, return the error directly.
 	// This DML and the following DDL is not atomic, that's not a problem.
-	_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(context.Background(), nil,
+	_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(d.ctx, nil,
 		"replace into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
@@ -7116,6 +7117,7 @@ func checkCacheTableSize(store kv.Storage, tableID int64) (bool, error) {
 	const cacheTableSizeLimit = 64 * (1 << 20) // 64M
 	succ := true
 	err := kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		txn.SetOption(kv.RequestSourceType, kv.InternalTxnCacheTable)
 		prefix := tablecodec.GenTablePrefix(tableID)
 		it, err := txn.Iter(prefix, prefix.PrefixNext())
 		if err != nil {

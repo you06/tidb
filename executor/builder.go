@@ -157,9 +157,9 @@ type MockExecutorBuilder struct {
 }
 
 // NewMockExecutorBuilderForTest is ONLY used in test.
-func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, replicaReadScope string) *MockExecutorBuilder {
+func NewMockExecutorBuilderForTest(sctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, replicaReadScope string) *MockExecutorBuilder {
 	return &MockExecutorBuilder{
-		executorBuilder: newExecutorBuilder(ctx, is, ti, replicaReadScope)}
+		executorBuilder: newExecutorBuilder(sctx, is, ti, replicaReadScope)}
 }
 
 // Build builds an executor tree according to `p`.
@@ -2505,7 +2505,8 @@ func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Co
 	if task.PartitionName != "" {
 		sqlexec.MustFormatSQL(sql, " partition(%n)", task.PartitionName)
 	}
-	rows, _, err := b.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(context.TODO(), nil, sql.String())
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeKey, kv.InternalTxnStats)
+	rows, _, err := b.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		return 0, false
 	}

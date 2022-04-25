@@ -19,6 +19,8 @@ import (
 	"crypto/tls"
 	"time"
 
+	"github.com/tikv/client-go/v2/util"
+
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -365,6 +367,8 @@ type Request struct {
 	ResourceGroupTagger tikvrpc.ResourceGroupTagger
 	// Paging indicates whether the request is a paging request.
 	Paging bool
+	// RequestSource indicates whether the request is an internal request.
+	RequestSource util.RequestSource
 }
 
 // PartitionIDAndRanges used by PartitionTableScan in tiflash.

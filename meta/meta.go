@@ -124,6 +124,9 @@ type Meta struct {
 func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
 	txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	if txn.GetOption(kv.RequestSourceType) == nil {
+		txn.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
+	}
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
 	listKey := DefaultJobListKey
 	if len(jobListKeys) != 0 {
@@ -137,6 +140,8 @@ func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 
 // NewSnapshotMeta creates a Meta with snapshot.
 func NewSnapshotMeta(snapshot kv.Snapshot) *Meta {
+	snapshot.SetOption(kv.RequestSourceInternal, true)
+	snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
 	t := structure.NewStructure(snapshot, nil, mMetaPrefix)
 	return &Meta{txn: t}
 }

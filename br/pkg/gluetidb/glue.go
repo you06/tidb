@@ -116,10 +116,12 @@ func (g Glue) GetVersion() string {
 
 // Execute implements glue.Session.
 func (gs *tidbSession) Execute(ctx context.Context, sql string) error {
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeKey, kv.InternalTxnBR)
 	return gs.ExecuteInternal(ctx, sql)
 }
 
 func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeKey, kv.InternalTxnBR)
 	rs, err := gs.se.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return errors.Trace(err)

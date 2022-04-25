@@ -152,21 +152,22 @@ func (dr *delRange) startEmulator() {
 }
 
 func (dr *delRange) doDelRangeWork() error {
-	ctx, err := dr.sessPool.get()
+	sctx, err := dr.sessPool.get()
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] delRange emulator get session failed", zap.Error(err))
 		return errors.Trace(err)
 	}
-	defer dr.sessPool.put(ctx)
+	defer dr.sessPool.put(sctx)
 
-	ranges, err := util.LoadDeleteRanges(ctx, math.MaxInt64)
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeKey, kv.InternalTxnDDL)
+	ranges, err := util.LoadDeleteRanges(ctx, sctx, math.MaxInt64)
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] delRange emulator load tasks failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 
 	for _, r := range ranges {
-		if err := dr.doTask(ctx, r); err != nil {
+		if err := dr.doTask(sctx, r); err != nil {
 			logutil.BgLogger().Error("[ddl] delRange emulator do task failed", zap.Error(err))
 			return errors.Trace(err)
 		}
@@ -256,6 +257,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 	}
 	var ea elementIDAlloc
 
+	ctx = context.WithValue(ctx, kv.RequestSourceType, strings.ReplaceAll(job.Type.String(), " ", "_"))
 	s := sctx.(sqlexec.SQLExecutor)
 	switch job.Type {
 	case model.ActionDropSchema:

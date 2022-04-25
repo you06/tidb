@@ -17,6 +17,8 @@ package session
 import (
 	"context"
 
+	"github.com/pingcap/tidb/kv"
+
 	"github.com/pingcap/tidb/parser/terror"
 )
 
@@ -67,6 +69,7 @@ func (a *advisoryLock) Close() {
 // We will never COMMIT the transaction, but the err indicates
 // if the lock was successfully acquired.
 func (a *advisoryLock) GetLock(lockName string, timeout int64) error {
+	a.ctx = context.WithValue(a.ctx, kv.RequestSourceTypeKey, kv.InternalTxnOthers)
 	_, err := a.session.ExecuteInternal(a.ctx, "SET innodb_lock_wait_timeout = %?", timeout)
 	if err != nil {
 		return err

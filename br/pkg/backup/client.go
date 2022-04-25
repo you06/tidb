@@ -815,7 +815,7 @@ func OnBackupResponse(
 			// Try to resolve lock.
 			log.Warn("backup occur kv error", zap.Reflect("error", v))
 			msBeforeExpired, err1 := lockResolver.ResolveLocks(
-				bo, backupTS, []*txnlock.Lock{txnlock.NewLock(lockErr)})
+				bo, backupTS, []*txnlock.Lock{txnlock.NewLock(lockErr)}, nil)
 			if err1 != nil {
 				return nil, 0, errors.Trace(err1)
 			}

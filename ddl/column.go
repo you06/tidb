@@ -947,7 +947,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 				defer w.sessPool.put(ctx)
 
-				_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(context.Background(), nil, valStr)
+				_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ctx, nil, valStr)
 				if err != nil {
 					job.State = model.JobStateCancelled
 					failpoint.Return(ver, err)
@@ -1312,10 +1312,11 @@ type updateColumnWorker struct {
 	rowMap map[int64]types.Datum
 
 	// For SQL Mode and warnings.
-	sqlMode mysql.SQLMode
+	sqlMode    mysql.SQLMode
+	jobContext *JobContext
 }
 
-func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, oldCol, newCol *model.ColumnInfo, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo) *updateColumnWorker {
+func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, oldCol, newCol *model.ColumnInfo, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &updateColumnWorker{
 		backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo),
@@ -1325,6 +1326,7 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 		rowDecoder:     rowDecoder,
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
 		sqlMode:        reorgInfo.ReorgMeta.SQLMode,
+		jobContext:     jc,
 	}
 }
 
@@ -1497,6 +1499,7 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		if tagger := w.reorgInfo.d.getResourceGroupTaggerForTopSQL(w.reorgInfo.Job); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
+		txn.SetOption(kv.RequestSourceType, w.jobContext.ddlJobSourceType())
 
 		rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {

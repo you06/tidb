@@ -14,6 +14,8 @@
 
 package kv
 
+import "github.com/tikv/client-go/v2/util"
+
 // Transaction options
 const (
 	// BinlogInfo contains the binlog data and client.
@@ -81,6 +83,10 @@ const (
 	TableToColumnMaps
 	// AssertionLevel controls how strict the assertions on data during transactions should be.
 	AssertionLevel
+	// RequestSourceInternal set request source scope of transaction.
+	RequestSourceInternal
+	// RequestSourceType set request source type of the current statement.
+	RequestSourceType
 )
 
 // ReplicaReadType is the type of replica to read data from
@@ -106,3 +112,46 @@ func (r ReplicaReadType) IsFollowerRead() bool {
 func (r ReplicaReadType) IsClosestRead() bool {
 	return r == ReplicaReadClosest
 }
+
+// RequestSourceTypeKeyType is a dummy type to avoid naming collision in context.
+type RequestSourceTypeKeyType = util.RequestSourceTypeKeyType
+
+// RequestSourceTypeKey is used as the key of request source type in context.
+var RequestSourceTypeKey = util.RequestSourceTypeKey
+
+const (
+	// InternalTxnOthers is the type of requests that consume low resources.
+	// This reduces the size of metrics.
+	InternalTxnOthers = util.InternalTxnOthers
+	// InternalTxnGC is the type of GC txn.
+	InternalTxnGC = util.InternalTxnGC
+	// InternalTxnBootstrap is the type of TiDB bootstrap txns.
+	InternalTxnBootstrap = InternalTxnOthers
+	// InternalTxnMeta is the type of the miscellaneous meta usage.
+	InternalTxnMeta = util.InternalTxnMeta
+	// InternalTxnDDL is the type of inner txns in ddl module.
+	InternalTxnDDL = InternalTxnOthers
+	// InternalTxnDDLPrefix is the prefix of the types of DDL operations needs backfilling.
+	InternalTxnDDLPrefix = "ddl_"
+	// InternalTxnCacheTable is the type of cache table usage.
+	InternalTxnCacheTable = InternalTxnOthers
+	// InternalTxnStats is the type of statistics txn.
+	InternalTxnStats = "stats"
+	// InternalTxnBindInfo is the type of bind info txn.
+	InternalTxnBindInfo = InternalTxnOthers
+	// InternalTxnSysVar is the type of sys var txn.
+	InternalTxnSysVar = InternalTxnOthers
+	// InternalTxnTelemetry is the type of telemetry.
+	InternalTxnTelemetry = InternalTxnOthers
+	// InternalTxnAdmin is the type of admin operations.
+	InternalTxnAdmin = "admin"
+	// InternalTxnPrivilege is the type of privilege txn.
+	InternalTxnPrivilege = InternalTxnOthers
+	// InternalTxnTools is the type of tools usage of TiDB.
+	// Do not classify different tools by now.
+	InternalTxnTools = "tools"
+	// InternalTxnBR is the type of BR usage.
+	InternalTxnBR = InternalTxnTools
+	// InternalTxnTrace handles the trace statement.
+	InternalTxnTrace = "Trace"
+)

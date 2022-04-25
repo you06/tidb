@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pingcap/tidb/kv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/chunk"
@@ -385,6 +387,7 @@ func (h *stateRemoteHandle) rollbackTxn(ctx context.Context) error {
 }
 
 func (h *stateRemoteHandle) runInTxn(ctx context.Context, pessimistic bool, fn func(ctx context.Context, txnTS uint64) error) error {
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeKey, kv.InternalTxnMeta)
 	err := h.beginTxn(ctx, pessimistic)
 	if err != nil {
 		return errors.Trace(err)
@@ -415,6 +418,7 @@ func (h *stateRemoteHandle) runInTxn(ctx context.Context, pessimistic bool, fn f
 }
 
 func (h *stateRemoteHandle) loadRow(ctx context.Context, tid int64, forUpdate bool) (CachedTableLockType, uint64, uint64, error) {
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeKey, kv.InternalTxnMeta)
 	var chunkRows []chunk.Row
 	var err error
 	if forUpdate {

@@ -16,6 +16,7 @@ go_library(
         "generated_column.go",
         "index.go",
         "mock.go",
+        "multi_schema_change.go",
         "options.go",
         "partition.go",
         "placement_policy.go",

@@ -458,6 +458,8 @@ func (dc *ddlCtx) buildDescTableScan(ctx *JobContext, startTS uint64, tbl table.
 	builder.Request.ResourceGroupTagger = ctx.getResourceGroupTaggerForTopSQL()
 	builder.Request.NotFillCache = true
 	builder.Request.Priority = kv.PriorityLow
+	builder.RequestSource.RequestSourceInternal = true
+	builder.RequestSource.RequestSourceType = ctx.ddlJobSourceType()
 
 	kvReq, err := builder.Build()
 	if err != nil {

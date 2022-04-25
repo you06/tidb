@@ -347,6 +347,7 @@ func (e *ShowExec) fetchShowBind() error {
 
 func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeKey, kv.InternalTxnBindInfo)
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf("SELECT count(*) FROM mysql.bind_info where status = '%s' or status = '%s';", bindinfo.Enabled, bindinfo.Using))
 	if err != nil {
@@ -377,6 +378,7 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 }
 
 func (e *ShowExec) fetchShowEngines(ctx context.Context) error {
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeKey, kv.InternalTxnMeta)
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT * FROM information_schema.engines`)
@@ -532,6 +534,7 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 	}
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeKey, kv.InternalTxnStats)
 
 	var snapshot uint64
 	txn, err := e.ctx.Txn(false)
@@ -1507,6 +1510,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeKey, kv.InternalTxnPrivilege)
 
 	userName, hostName := e.User.Username, e.User.Hostname
 	sessVars := e.ctx.GetSessionVars()
@@ -1964,10 +1968,11 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	if !tbl.IsView() {
 		return nil
 	}
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeKey, kv.InternalTxnOthers)
 	// We need to run the build plan process in another session because there may be
 	// multiple goroutines running at the same time while session is not goroutine-safe.
 	// Take joining system table as an example, `fetchBuildSideRows` and `fetchProbeSideChunks` can be run concurrently.
-	return runWithSystemSession(sctx, func(s sessionctx.Context) error {
+	return runWithSystemSession(ctx, sctx, func(s sessionctx.Context) error {
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
 		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl); err == nil {
@@ -1989,12 +1994,12 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	})
 }
 
-func runWithSystemSession(sctx sessionctx.Context, fn func(sessionctx.Context) error) error {
+func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(sessionctx.Context) error) error {
 	b := &baseExecutor{ctx: sctx}
 	sysCtx, err := b.getSysSession()
 	if err != nil {
 		return err
 	}
-	defer b.releaseSysSession(sysCtx)
+	defer b.releaseSysSession(ctx, sysCtx)
 	return fn(sysCtx)
 }

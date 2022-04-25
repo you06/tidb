@@ -827,14 +827,14 @@ func TestVecGroupChecker4GroupCount(t *testing.T) {
 	}
 }
 
-func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, innerSrc, outerSrc Executor) Executor {
+func buildMergeJoinExec(sctx sessionctx.Context, joinType plannercore.JoinType, innerSrc, outerSrc Executor) Executor {
 	if joinType == plannercore.RightOuterJoin {
 		innerSrc, outerSrc = outerSrc, innerSrc
 	}
 
 	innerCols := innerSrc.Schema().Columns
 	outerCols := outerSrc.Schema().Columns
-	j := plannercore.BuildMergeJoinPlan(ctx, joinType, outerCols, innerCols)
+	j := plannercore.BuildMergeJoinPlan(sctx, joinType, outerCols, innerCols)
 
 	j.SetChildren(&mockPlan{exec: outerSrc}, &mockPlan{exec: innerSrc})
 	cols := append(append([]*expression.Column{}, outerCols...), innerCols...)
@@ -846,7 +846,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(nil, j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(sctx, nil, nil, oracle.GlobalTxnScope)
 	return b.build(j)
 }
 

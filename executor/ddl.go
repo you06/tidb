@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/tidb/kv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -481,7 +483,8 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 				zap.String("table", fullti.Name.O),
 			)
 			exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-			_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+			ctx := context.WithValue(context.Background(), kv.RequestSourceTypeKey, kv.InternalTxnDDL)
+			_, _, err := exec.ExecRestrictedSQL(ctx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
 			if err != nil {
 				return err
 			}
@@ -607,7 +610,8 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 	if err != nil {
 		return nil, nil, err
 	}
-	defer e.releaseSysSession(se)
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeKey, kv.InternalTxnDDL)
+	defer e.releaseSysSession(ctx, se)
 	job, err := ddl.GetHistoryJobByID(se, s.JobID)
 	if err != nil {
 		return nil, nil, err

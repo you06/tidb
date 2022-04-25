@@ -99,7 +99,7 @@ func PrintLongTimeInternalTxn(now time.Time, startTS uint64, runByFunction bool)
 	}
 }
 
-// RunInNewTxn will run the f in a new transaction environment.
+// RunInNewTxn will run the f in a new transaction environment, should be used by inner txn only.
 func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx context.Context, txn Transaction) error) error {
 	var (
 		err           error
@@ -117,6 +117,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 			logutil.BgLogger().Error("RunInNewTxn", zap.Error(err))
 			return err
 		}
+		txn.SetOption(RequestSourceInternal, true)
 
 		// originalTxnTS is used to trace the original transaction when the function is retryable.
 		if i == 0 {

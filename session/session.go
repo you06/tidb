@@ -25,6 +25,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	stderrs "errors"
+	"flag"
 	"fmt"
 	"math/rand"
 	"runtime/pprof"
@@ -1232,6 +1233,9 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet, allo
 // getTableValue executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getTableValue(ctx context.Context, tblName string, varName string) (string, error) {
+	if ctx.Value(kv.RequestSourceTypeKey) == nil {
+		ctx = context.WithValue(ctx, kv.RequestSourceTypeKey, kv.InternalTxnSysVar)
+	}
 	rows, fields, err := s.ExecRestrictedSQL(ctx, nil, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
 	if err != nil {
 		return "", err
@@ -1250,6 +1254,7 @@ func (s *session) getTableValue(ctx context.Context, tblName string, varName str
 // replaceGlobalVariablesTableValue executes restricted sql updates the variable value
 // It will then notify the etcd channel that the value has changed.
 func (s *session) replaceGlobalVariablesTableValue(ctx context.Context, varName, val string) error {
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeKey, kv.InternalTxnSysVar)
 	_, _, err := s.ExecRestrictedSQL(ctx, nil, `REPLACE INTO %n.%n (variable_name, variable_value) VALUES (%?, %?)`, mysql.SystemDB, mysql.GlobalVariablesTable, varName, val)
 	if err != nil {
 		return err
@@ -1337,7 +1342,8 @@ func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
 
 // SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
 func (s *session) SetTiDBTableValue(name, value, comment string) error {
-	_, _, err := s.ExecRestrictedSQL(context.TODO(), nil, `REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, name, value, comment)
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeKey, kv.InternalTxnSysVar)
+	_, _, err := s.ExecRestrictedSQL(ctx, nil, `REPLACE INTO mysql.tidb (variable_name, variable_value, comment) VALUES (%?, %?, %?)`, name, value, comment)
 	return err
 }
 
@@ -1710,6 +1716,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 func ExecRestrictedStmt4Test(ctx context.Context, s Session,
 	stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
 	[]chunk.Row, []*ast.ResultField, error) {
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeKey, kv.InternalTxnOthers)
 	return s.(*session).ExecRestrictedStmt(ctx, stmtNode, opts...)
 }
 
@@ -1912,6 +1919,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 			time.Sleep(time.Duration(v) * time.Millisecond)
 		}
 	})
+
+	stmtLabel := executor.GetStmtLabel(stmtNode)
+	s.setRequestSource(ctx, stmtLabel)
 
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
@@ -2416,6 +2426,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	if p, isOK := txnManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); isOK {
 		p.InfoSchema = is
 	}
+	s.setRequestSource(ctx, preparedStmt.PreparedAst.StmtType)
+	// even the txn is valid, still need to set session variable for coprocessor usage.
+	s.sessionVars.RequestSourceType = preparedStmt.PreparedAst.StmtType
 
 	if ok {
 		rs, ok, err := s.cachedPointPlanExec(ctx, txnManager.GetTxnInfoSchema(), stmtID, preparedStmt, replicaReadScope, args)
@@ -2489,6 +2502,12 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if s.GetSessionVars().StmtCtx.WeakConsistency {
 			s.txn.SetOption(kv.IsolationLevel, kv.RC)
 		}
+		if s.sessionVars.InRestrictedSQL {
+			s.txn.SetOption(kv.RequestSourceInternal, true)
+		}
+		if s.sessionVars.RequestSourceType != "" {
+			s.txn.SetOption(kv.RequestSourceType, s.sessionVars.RequestSourceType)
+		}
 		setTxnAssertionLevel(&s.txn, s.sessionVars.AssertionLevel)
 	}
 	return &s.txn, nil
@@ -2558,6 +2577,12 @@ func (s *session) NewTxn(ctx context.Context) error {
 		},
 	}
 	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
+	if s.GetSessionVars().InRestrictedSQL {
+		s.txn.SetOption(kv.RequestSourceInternal, true)
+		if tp := ctx.Value(kv.RequestSourceTypeKey); tp != nil {
+			s.txn.SetOption(kv.RequestSourceType, tp.(string))
+		}
+	}
 	return nil
 }
 
@@ -2818,8 +2843,8 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 }
 
 // loadCollationParameter loads collation parameter from mysql.tidb
-func loadCollationParameter(se *session) (bool, error) {
-	para, err := se.getTableValue(context.TODO(), mysql.TiDBTable, tidbNewCollationEnabled)
+func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
+	para, err := se.getTableValue(ctx, mysql.TiDBTable, tidbNewCollationEnabled)
 	if err != nil {
 		return false, err
 	}
@@ -2838,6 +2863,7 @@ var errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeKey, kv.InternalTxnSysVar)
 	cfg := config.GetGlobalConfig()
 	if len(cfg.Instance.PluginLoad) > 0 {
 		err := plugin.Load(context.Background(), plugin.Config{
@@ -2863,14 +2889,14 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ses[0].GetSessionVars().InRestrictedSQL = true
 
 	// get system tz from mysql.tidb
-	tz, err := ses[0].getTableValue(context.TODO(), mysql.TiDBTable, tidbSystemTZ)
+	tz, err := ses[0].getTableValue(ctx, mysql.TiDBTable, tidbSystemTZ)
 	if err != nil {
 		return nil, err
 	}
 	timeutil.SetSystemTZ(tz)
 
 	// get the flag from `mysql`.`tidb` which indicating if new collations are enabled.
-	newCollationEnabled, err := loadCollationParameter(ses[0])
+	newCollationEnabled, err := loadCollationParameter(ctx, ses[0])
 	if err != nil {
 		return nil, err
 	}
@@ -2911,7 +2937,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = executor.LoadOptRuleBlacklist(ses[5])
+	err = executor.LoadOptRuleBlacklist(ctx, ses[5])
 	if err != nil {
 		return nil, err
 	}
@@ -3221,6 +3247,9 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 		return err
 	}
 	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
+	if s.sessionVars.RequestSourceType != "" {
+		s.txn.SetOption(kv.RequestSourceType, s.sessionVars.RequestSourceType)
+	}
 	return nil
 }
 
@@ -3228,6 +3257,12 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 func (s *session) GetSnapshotWithTS(ts uint64) kv.Snapshot {
 	snap := s.GetStore().GetSnapshot(kv.Version{Ver: ts})
 	snap.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
+	if s.sessionVars.InRestrictedSQL {
+		snap.SetOption(kv.RequestSourceInternal, true)
+	}
+	if s.sessionVars.RequestSourceType != "" {
+		snap.SetOption(kv.RequestSourceType, s.sessionVars.RequestSourceType)
+	}
 	return snap
 }
 
@@ -3510,4 +3545,24 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 // DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
 func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	return s.sessionVars.DecodeSessionStates(ctx, sessionStates)
+}
+
+func (s *session) setRequestSource(ctx context.Context, stmtLabel string) {
+	if !s.isInternal() {
+		if txn, _ := s.Txn(false); txn != nil && txn.Valid() {
+			txn.SetOption(kv.RequestSourceType, stmtLabel)
+		} else {
+			s.sessionVars.RequestSourceType = stmtLabel
+		}
+	} else {
+		if tp := ctx.Value(kv.RequestSourceTypeKey); tp != nil {
+			s.sessionVars.RequestSourceType = tp.(string)
+		} else {
+			// panic in test mode in case there are requests without source in the future.
+			if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+				panic("unexpected no type context, if you see this error," +
+					"the `RequestSourceTypeKey` is missing in your context.")
+			}
+		}
+	}
 }

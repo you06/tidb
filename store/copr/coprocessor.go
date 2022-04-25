@@ -165,6 +165,7 @@ type copTask struct {
 	pagingSize uint64
 
 	partitionIndex int64 // used by balanceBatchCopTask in PartitionTableScan
+	requestSource  util.RequestSource
 }
 
 func (r *copTask) String() string {
@@ -212,15 +213,16 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				pagingSize = paging.MinPagingSize
 			}
 			tasks = append(tasks, &copTask{
-				region:     loc.Location.Region,
-				bucketsVer: loc.getBucketVersion(),
-				ranges:     loc.Ranges.Slice(i, nextI),
-				respChan:   make(chan *copResponse, chanSize),
-				cmdType:    cmdType,
-				storeType:  req.StoreType,
-				eventCb:    eventCb,
-				paging:     req.Paging,
-				pagingSize: pagingSize,
+				region:        loc.Location.Region,
+				bucketsVer:    loc.getBucketVersion(),
+				ranges:        loc.Ranges.Slice(i, nextI),
+				respChan:      make(chan *copResponse, chanSize),
+				cmdType:       cmdType,
+				storeType:     req.StoreType,
+				eventCb:       eventCb,
+				paging:        req.Paging,
+				pagingSize:    pagingSize,
+				requestSource: req.RequestSource,
 			})
 			i = nextI
 		}
@@ -741,6 +743,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		RecordTimeStat: true,
 		RecordScanStat: true,
 		TaskId:         worker.req.TaskID,
+		RequestSource:  task.requestSource.GetRequestSource(),
 	})
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
@@ -893,7 +896,9 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		// We may meet RegionError at the first packet, but not during visiting the stream.
 		return buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req, task.eventCb)
 	}
+	var resolveLockDetail *util.ResolveLockDetail
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
+		resolveLockDetail = worker.getLockResolverDetails()
 		// Be care that we didn't redact the SQL statement because the log is DEBUG level.
 		if task.eventCb != nil {
 			task.eventCb(trxevents.WrapCopMeetLock(&trxevents.CopMeetLock{
@@ -903,7 +908,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			logutil.Logger(bo.GetCtx()).Debug("coprocessor encounters lock",
 				zap.Stringer("lock", lockErr))
 		}
-		msBeforeExpired, err1 := worker.kvclient.ResolveLocks(bo.TiKVBackoffer(), worker.req.StartTs, []*txnlock.Lock{txnlock.NewLock(lockErr)})
+		msBeforeExpired, err1 := worker.kvclient.ResolveLocks(bo.TiKVBackoffer(), worker.req.StartTs, []*txnlock.Lock{txnlock.NewLock(lockErr)}, resolveLockDetail)
 		err1 = derr.ToTiDBErr(err1)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
@@ -942,7 +947,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	} else if task.ranges != nil && task.ranges.Len() > 0 {
 		resp.startKey = task.ranges.At(0).StartKey
 	}
-	worker.handleCollectExecutionInfo(bo, rpcCtx, resp)
+	worker.handleCollectExecutionInfo(bo, rpcCtx, resp, resolveLockDetail)
 	resp.respTime = costTime
 	if resp.pbResp.IsCacheHit {
 		if cacheValue == nil {
@@ -974,7 +979,16 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	return nil, nil
 }
 
-func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse) {
+func (worker *copIteratorWorker) getLockResolverDetails() *util.ResolveLockDetail {
+	if !worker.enableCollectExecutionInfo {
+		return nil
+	}
+	return &util.ResolveLockDetail{
+		RequestSource: &worker.req.RequestSource,
+	}
+}
+
+func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, resolveLockDetail *util.ResolveLockDetail) {
 	defer func() {
 		worker.kvclient.Stats = nil
 	}()
@@ -1002,6 +1016,9 @@ func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCt
 		resp.detail.CalleeAddress = rpcCtx.Addr
 	}
 	sd := &util.ScanDetail{}
+	if resolveLockDetail != nil {
+		sd.ResolveLock = *resolveLockDetail
+	}
 	td := util.TimeDetail{}
 	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
 		// Take values in `ExecDetailsV2` first.

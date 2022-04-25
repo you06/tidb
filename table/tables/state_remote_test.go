@@ -40,7 +40,7 @@ func TestStateRemote(t *testing.T) {
 	tk.MustExec("use test")
 	se := tk.Session()
 
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeKey, kv.InternalTxnMeta)
 	h := tables.NewStateRemote(se)
 
 	// Check the initial value.

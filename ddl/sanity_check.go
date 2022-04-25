@@ -58,10 +58,11 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 		d.sessPool.put(sctx)
 	}()
 
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeKey, kv.InternalTxnDDL)
 	query := `select sum(cnt) from
 	(select count(1) cnt from mysql.gc_delete_range where job_id = %? union all
 	select count(1) cnt from mysql.gc_delete_range_done where job_id = %?) as gdr;`
-	rs, err := s.ExecuteInternal(context.TODO(), query, job.ID, job.ID)
+	rs, err := s.ExecuteInternal(ctx, query, job.ID, job.ID)
 	if err != nil {
 		if strings.Contains(err.Error(), "Not Supported") {
 			return
