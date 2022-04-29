@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -107,6 +108,7 @@ type JobContext struct {
 	cacheSQL           string
 	cacheNormalizedSQL string
 	cacheDigest        *parser.Digest
+	tp                 string
 }
 
 // NewJobContext returns a new ddl job context.
@@ -116,6 +118,7 @@ func NewJobContext() *JobContext {
 		cacheSQL:           "",
 		cacheNormalizedSQL: "",
 		cacheDigest:        nil,
+		tp:                 "unknown",
 	}
 }
 
@@ -291,6 +294,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
 	err := kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
+		txn.SetOption(kv.RequestSourceType, kv.InternalTxnDDL)
 		ids, err := t.GenGlobalIDs(len(tasks))
 		if err != nil {
 			return errors.Trace(err)
@@ -346,6 +350,7 @@ func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
 	var job *model.Job
 
 	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		txn.SetOption(kv.RequestSourceType, kv.InternalTxnDDL)
 		t := meta.NewMeta(txn)
 		var err1 error
 		job, err1 = t.GetHistoryDDLJob(id)
@@ -548,6 +553,11 @@ func (w *JobContext) setDDLLabelForTopSQL(job *model.Job) {
 	}
 }
 
+func (w *JobContext) setDDLLabelForDiagnosis(job *model.Job) {
+	w.tp = strings.ReplaceAll(job.Type.String(), " ", "_")
+	w.ddlJobCtx = context.WithValue(w.ddlJobCtx, kv.RequestSourceType, w.ddlJobSourceType())
+}
+
 func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
 	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
 		return nil
@@ -566,6 +576,10 @@ func (w *JobContext) resetWhenJobFinish() {
 	w.cacheSQL = ""
 	w.cacheDigest = nil
 	w.cacheNormalizedSQL = ""
+}
+
+func (w *JobContext) ddlJobSourceType() string {
+	return kv.InternalTxnDDLPrefix + w.tp
 }
 
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
@@ -603,6 +617,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			w.setDDLLabelForTopSQL(job)
+			w.setDDLLabelForDiagnosis(job)
 			if tagger := w.getResourceGroupTaggerForTopSQL(); tagger != nil {
 				txn.SetOption(kv.ResourceGroupTagger, tagger)
 			}
@@ -628,6 +643,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			d.mu.hook.OnJobRunBefore(job)
 			d.mu.RUnlock()
 
+			// set request source type to DDL type
+			txn.SetOption(kv.RequestSourceType, w.ddlJobSourceType())
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
 			schemaVer, runJobErr = w.runDDLJob(d, t, job)

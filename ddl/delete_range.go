@@ -256,6 +256,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 	}
 	var ea elementIDAlloc
 
+	ctx = context.WithValue(ctx, kv.RequestSourceType, strings.ReplaceAll(job.Type.String(), " ", "_"))
 	s := sctx.(sqlexec.SQLExecutor)
 	switch job.Type {
 	case model.ActionDropSchema:

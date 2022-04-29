@@ -1439,8 +1439,12 @@ func (s *session) ClearDiskFullOpt() {
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, err error) {
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
+	if tp := ctx.Value(kv.RequestSourceType); tp != nil {
+		s.sessionVars.InternalRequestSourceType = tp.(string)
+	}
 	defer func() {
 		s.sessionVars.InRestrictedSQL = origin
+		s.sessionVars.InternalRequestSourceType = ""
 		if topsqlstate.TopSQLEnabled() {
 			//  Restore the goroutine label by using the original ctx after execution is finished.
 			pprof.SetGoroutineLabels(ctx)
@@ -1601,6 +1605,12 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	[]chunk.Row, []*ast.ResultField, error) {
 	if topsqlstate.TopSQLEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)
+	}
+	if tp := ctx.Value(kv.RequestSourceType); tp != nil {
+		s.sessionVars.InternalRequestSourceType = tp.(string)
+		defer func() {
+			s.sessionVars.InternalRequestSourceType = ""
+		}()
 	}
 	execOption := sqlexec.GetExecOption(opts)
 	var se *session
@@ -1770,6 +1780,12 @@ func (s *session) withRestrictedSQLExecutor(ctx context.Context, opts []sqlexec.
 }
 
 func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+	if tp := ctx.Value(kv.RequestSourceType); tp != nil {
+		s.sessionVars.InternalRequestSourceType = tp.(string)
+		defer func() {
+			s.sessionVars.InternalRequestSourceType = ""
+		}()
+	}
 	return s.withRestrictedSQLExecutor(ctx, opts, func(ctx context.Context, se *session) ([]chunk.Row, []*ast.ResultField, error) {
 		stmt, err := se.ParseWithParams(ctx, sql, params...)
 		if err != nil {
@@ -2386,6 +2402,12 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if s.GetSessionVars().StmtCtx.WeakConsistency {
 			s.txn.SetOption(kv.IsolationLevel, kv.RC)
 		}
+		if s.sessionVars.InRestrictedSQL {
+			s.txn.SetOption(kv.RequestSourceInternal, true)
+			if s.sessionVars.InternalRequestSourceType != "" {
+				s.txn.SetOption(kv.RequestSourceType, s.sessionVars.InternalRequestSourceType)
+			}
+		}
 		setTxnAssertionLevel(&s.txn, s.sessionVars.AssertionLevel)
 	}
 	return &s.txn, nil
@@ -2453,6 +2475,9 @@ func (s *session) NewTxn(ctx context.Context) error {
 		TxnScope:    s.sessionVars.CheckAndGetTxnScope(),
 	}
 	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
+	if s.GetSessionVars().InRestrictedSQL {
+		s.txn.SetOption(kv.RequestSourceInternal, true)
+	}
 	return nil
 }
 

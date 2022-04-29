@@ -238,14 +238,14 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 		}
 	}
-	err = e.saveAnalyzeOptsV2()
+	err = e.saveAnalyzeOptsV2(ctx)
 	if err != nil {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
 	return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
 }
 
-func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
+func (e *AnalyzeExec) saveAnalyzeOptsV2(ctx context.Context) error {
 	if !variable.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
 		return nil
 	}
@@ -276,7 +276,7 @@ func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
 		idx += 1
 	}
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql.String())
+	_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		return err
 	}

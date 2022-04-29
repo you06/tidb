@@ -1310,6 +1310,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 		if tagger := w.ddlWorker.getResourceGroupTaggerForTopSQL(); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
+		txn.SetOption(kv.RequestSourceType, w.ddlWorker.ddlJobSourceType())
 
 		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
@@ -1524,6 +1525,7 @@ func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		if tagger := w.ddlWorker.getResourceGroupTaggerForTopSQL(); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
+		txn.SetOption(kv.RequestSourceType, w.ddlWorker.ddlJobSourceType())
 
 		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {

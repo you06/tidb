@@ -341,7 +341,7 @@ func (h *Handle) sweepIdxUsageList() indexUsageMap {
 
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func (h *Handle) DumpIndexUsageToKV() error {
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
 	mapper := h.sweepIdxUsageList()
 	for id, value := range mapper {
 		const sql = `insert into mysql.SCHEMA_INDEX_USAGE values (%?, %?, %?, %?, %?) on duplicate key update query_count=query_count+%?, rows_selected=rows_selected+%?, last_used_at=greatest(last_used_at, %?)`
@@ -726,7 +726,7 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 
 // HandleUpdateStats update the stats using feedback.
 func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
 	tables, _, err := h.execRestrictedSQL(ctx, "SELECT distinct table_id from mysql.stats_feedback")
 	if err != nil {
 		return errors.Trace(err)
@@ -972,7 +972,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 }
 
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
 	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"
 	rows, _, err := h.execRestrictedSQL(ctx, sql, variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
 	if err != nil {

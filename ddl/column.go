@@ -1513,6 +1513,7 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		if tagger := w.ddlWorker.getResourceGroupTaggerForTopSQL(); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
+		txn.SetOption(kv.RequestSourceType, w.ddlWorker.ddlJobSourceType())
 
 		rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {

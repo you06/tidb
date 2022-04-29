@@ -81,7 +81,9 @@ const (
 	TableToColumnMaps
 	// AssertionLevel controls how strict the assertions on data during transactions should be.
 	AssertionLevel
-	// SourceType set request source type of the current statement.
+	// RequestSourceInternal set request source scope of transaction.
+	RequestSourceInternal
+	// RequestSourceType set request source type of the current statement.
 	RequestSourceType
 )
 
@@ -110,6 +112,18 @@ func (r ReplicaReadType) IsClosestRead() bool {
 }
 
 const (
-	InnerTxnDDLAddIndex = "ddl_add_index"
-	InnerTxnDDLDelIndex = "ddl_del_index"
+	// InternalTxnMeta is the type of the miscellaneous meta usage.
+	InternalTxnMeta = "meta"
+	// InternalTxnDDL is the type of inner txns in ddl module.
+	InternalTxnDDL = "ddl"
+	// InternalTxnDDLPrefix is the prefix of the types of DDL operations.
+	InternalTxnDDLPrefix = "ddl_"
+	// InternalTxnCacheTable is the type of cache table usage.
+	InternalTxnCacheTable = "cache_table"
+	// InternalTxnStats is the type of statistics txn.
+	InternalTxnStats = "stats"
+	// InternalTxnBindInfo is the type of bind info txn.
+	InternalTxnBindInfo = "bind_info"
+	// InternalTxnSysVar is the type of sys var txn.
+	InternalTxnSysVar = "sys_var"
 )

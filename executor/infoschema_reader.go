@@ -317,8 +317,8 @@ func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
 		// internal session created with createSession doesn't has the PrivilegeManager. For most experienced cases before,
 		// we use it like this:
 		// ```
-		// checker := privilege.GetPrivilegeManager(ctx)
-		// if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+		// checker := privilege.GetPrivilegeManager(sctx)
+		// if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 		//	  continue
 		// }
 		// do something.

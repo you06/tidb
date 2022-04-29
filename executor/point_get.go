@@ -55,7 +55,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		return nil
 	}
 	e := &PointGetExecutor{
-		baseExecutor:     newBaseExecutor(b.ctx, p.Schema(), p.ID()),
+		baseExecutor:     newBaseExecutor(b.sctx, p.Schema(), p.ID()),
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 	}
