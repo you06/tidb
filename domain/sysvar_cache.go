@@ -17,11 +17,11 @@ package domain
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/kv"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
@@ -96,7 +96,7 @@ func (do *Domain) fetchTableValues(sctx sessionctx.Context) (map[string]string, 
 	tableContents := make(map[string]string)
 	// Copy all variables from the table to tableContents
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnSysVar)
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeContext, kv.InternalTxnSysVar)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT variable_name, variable_value FROM mysql.global_variables`)
 	if err != nil {
 		return nil, err

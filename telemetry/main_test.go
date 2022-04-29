@@ -15,16 +15,24 @@
 package telemetry
 
 import (
+	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/kv"
+
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
 )
 
 var (
-	GetFeatureUsage = getFeatureUsage
 	GetTxnUsageInfo = getTxnUsageInfo
 )
+
+func GetFeatureUsage(sctx sessionctx.Context) (*featureUsage, error) {
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeContext, kv.InternalTxnTelemetry)
+	return getFeatureUsage(ctx, sctx)
+}
 
 func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()

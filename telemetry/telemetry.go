@@ -22,6 +22,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/pingcap/tidb/kv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
@@ -122,7 +124,8 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 
 	// TODO: We should use the context from domain, so that when request is blocked for a long time it will not
 	// affect TiDB shutdown.
-	reqCtx, cancel := context.WithTimeout(context.Background(), uploadTimeout)
+	reqCtx := context.WithValue(context.Background(), kv.RequestSourceTypeContext, kv.InternalTxnTelemetry)
+	reqCtx, cancel := context.WithTimeout(reqCtx, uploadTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, "POST", apiEndpoint, bytes.NewReader(rawJSON))

@@ -18,12 +18,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/kv"
 	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pingcap/tidb/kv"
 
 	"github.com/cznic/mathutil"
 	"github.com/ngaut/pools"
@@ -126,12 +127,14 @@ func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.
 }
 
 func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeContext, kv.InternalTxnStats)
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
 		return exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, params...)
 	})
 }
 
 func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, procTrackID uint64, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeContext, kv.InternalTxnStats)
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
 		optFuncs := []sqlexec.OptionFuncAlias{
 			execOptionForAnalyze[statsVer],
@@ -144,6 +147,7 @@ func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int
 }
 
 func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, snapshot uint64, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeContext, kv.InternalTxnStats)
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
 		optFuncs := []sqlexec.OptionFuncAlias{
 			sqlexec.ExecOptionWithSnapshot(snapshot),
@@ -257,7 +261,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	} else {
 		lastVersion = 0
 	}
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
+	ctx := context.Background()
 	rows, _, err := h.execRestrictedSQL(ctx, "SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %? order by version", lastVersion)
 	if err != nil {
 		return errors.Trace(err)
@@ -1334,7 +1338,7 @@ func (h *Handle) columnCountFromStorage(reader *statsReader, tableID, colID, sta
 }
 
 func (h *Handle) statsMetaByTableIDFromStorage(tableID int64, snapshot uint64) (version uint64, modifyCount, count int64, err error) {
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
+	ctx := context.Background()
 	var rows []chunk.Row
 	if snapshot == 0 {
 		rows, _, err = h.execRestrictedSQL(ctx, "SELECT version, modify_count, count from mysql.stats_meta where table_id = %? order by version", tableID)
@@ -1361,7 +1365,7 @@ type statsReader struct {
 }
 
 func (sr *statsReader) read(sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
-	ctx := context.TODO()
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeContext, kv.InternalTxnStats)
 	if sr.snapshot > 0 {
 		return sr.ctx.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool, sqlexec.ExecOptionWithSnapshot(sr.snapshot)}, sql, args...)
 	}
@@ -1445,7 +1449,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 	strColIDs := string(bytes)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
+	ctx := context.Background()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
@@ -1508,7 +1512,7 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExi
 			err = h.recordHistoricalStatsMeta(tableID, statsVer)
 		}
 	}()
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
+	ctx := context.Background()
 	rows, _, err := h.execRestrictedSQL(ctx, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %? and status in (%?, %?)", statsName, tableID, StatsStatusInited, StatsStatusAnalyzed)
 	if err != nil {
 		return errors.Trace(err)
@@ -1605,7 +1609,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 
 // BuildExtendedStats build extended stats for column groups if needed based on the column samples.
 func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) (*statistics.ExtendedStatsColl, error) {
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
+	ctx := context.Background()
 	const sql = "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)"
 	rows, _, err := h.execRestrictedSQL(ctx, sql, tableID, StatsStatusAnalyzed, StatsStatusInited)
 	if err != nil {
@@ -1867,7 +1871,7 @@ func (h *Handle) LoadColumnStatsUsage(loc *time.Location) (map[model.TableColumn
 
 // CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
 func (h *Handle) CollectColumnsInExtendedStats(tableID int64) ([]int64, error) {
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
+	ctx := context.Background()
 	const sql = "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)"
 	rows, _, err := h.execRestrictedSQL(ctx, sql, tableID, StatsStatusAnalyzed, StatsStatusInited)
 	if err != nil {
@@ -1924,7 +1928,7 @@ const maxColumnSize = 6 << 20
 
 // RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
 func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo) (uint64, error) {
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeContext, kv.InternalTxnStats)
 	js, err := h.DumpStatsToJSON(dbName, tableInfo, nil)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -1984,7 +1988,7 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error 
 		return nil
 	}
 
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
+	ctx := context.Background()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	rows, _, err := h.execRestrictedSQL(ctx, "select modify_count, count from mysql.stats_meta where table_id = %? and version = %?", tableID, version)
@@ -2022,7 +2026,7 @@ func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, procID uint64) err
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.RestrictedSQLExecutor)
-	ctx := context.TODO()
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeContext, kv.InternalTxnStats)
 	const insertJob = "INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, state, instance, process_id) VALUES (%?, %?, %?, %?, %?, %?, %?)"
 	_, _, err = exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, job.JobInfo, statistics.AnalyzePending, address, procID)
 	if err != nil {

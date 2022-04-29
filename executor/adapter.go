@@ -257,7 +257,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		}
 	}
 	if a.PsStmt.Executor == nil {
-		b := newExecutorBuilder(ctx, a.Ctx, is, a.Ti, a.SnapshotTS, a.IsStaleness, a.ReplicaReadScope)
+		b := newExecutorBuilder(a.Ctx, is, a.Ti, a.SnapshotTS, a.IsStaleness, a.ReplicaReadScope)
 		newExecutor := b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
@@ -399,7 +399,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		sctx.GetSessionVars().StmtCtx.MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
 	}
 
-	e, err := a.buildExecutor(ctx)
+	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
 	}
@@ -802,7 +802,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	if err != nil {
 		return nil, err
 	}
-	e, err := a.buildExecutor(ctx)
+	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
 	}
@@ -827,25 +827,25 @@ type pessimisticTxn interface {
 	KeysNeedToLock() ([]kv.Key, error)
 }
 
-// buildExecutor build a executor from plan, prepared statement may need additional procedure.
-func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
-	sctx := a.Ctx
-	stmtCtx := sctx.GetSessionVars().StmtCtx
+// buildExecutor build an executor from plan, prepared statement may need additional procedure.
+func (a *ExecStmt) buildExecutor() (Executor, error) {
+	ctx := a.Ctx
+	stmtCtx := ctx.GetSessionVars().StmtCtx
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
-		if snapshotTS := sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-			if err := sctx.InitTxnWithStartTS(snapshotTS); err != nil {
+		if snapshotTS := ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+			if err := ctx.InitTxnWithStartTS(snapshotTS); err != nil {
 				return nil, err
 			}
 		} else {
 			// Do not sync transaction for Execute statement, because the real optimization work is done in
 			// "ExecuteExec.Build".
-			useMaxTS, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, a.Plan)
+			useMaxTS, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
 			if err != nil {
 				return nil, err
 			}
 			if useMaxTS {
-				logutil.BgLogger().Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", sctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
-				if err := sctx.InitTxnWithStartTS(math.MaxUint64); err != nil {
+				logutil.BgLogger().Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
+				if err := ctx.InitTxnWithStartTS(math.MaxUint64); err != nil {
 					return nil, err
 				}
 			}
@@ -859,11 +859,11 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 			}
 		}
 	}
-	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
-		sctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
+	if _, ok := a.Plan.(*plannercore.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
+		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, sctx, a.InfoSchema, a.Ti, a.SnapshotTS, a.IsStaleness, a.ReplicaReadScope)
+	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.SnapshotTS, a.IsStaleness, a.ReplicaReadScope)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
@@ -871,7 +871,7 @@ func (a *ExecStmt) buildExecutor(ctx context.Context) (Executor, error) {
 
 	failpoint.Inject("assertTxnManagerAfterBuildExecutor", func() {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerAfterBuildExecutor", true)
-		sessiontxn.AssertTxnManagerInfoSchema(b.sctx, b.is)
+		sessiontxn.AssertTxnManagerInfoSchema(b.ctx, b.is)
 	})
 
 	// ExecuteExec is not a real Executor, we only use it to build another Executor from a prepared statement.

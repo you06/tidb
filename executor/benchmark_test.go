@@ -284,30 +284,30 @@ func defaultAggTestCase(exec string) *aggTestCase {
 	return &aggTestCase{exec, ast.AggFuncSum, 1000, false, 10000000, 4, true, ctx}
 }
 
-func buildHashAggExecutor(sctx sessionctx.Context, src Executor, schema *expression.Schema,
+func buildHashAggExecutor(ctx sessionctx.Context, src Executor, schema *expression.Schema,
 	aggFuncs []*aggregation.AggFuncDesc, groupItems []expression.Expression) Executor {
 	plan := new(core.PhysicalHashAgg)
 	plan.AggFuncs = aggFuncs
 	plan.GroupByItems = groupItems
 	plan.SetSchema(schema)
-	plan.Init(sctx, nil, 0)
+	plan.Init(ctx, nil, 0)
 	plan.SetChildren(nil)
-	b := newExecutorBuilder(context.Background(), sctx, nil, nil, 0, false, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(ctx, nil, nil, 0, false, oracle.GlobalTxnScope)
 	exec := b.build(plan)
 	hashAgg := exec.(*HashAggExec)
 	hashAgg.children[0] = src
 	return exec
 }
 
-func buildStreamAggExecutor(sctx sessionctx.Context, srcExec Executor, schema *expression.Schema,
+func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *expression.Schema,
 	aggFuncs []*aggregation.AggFuncDesc, groupItems []expression.Expression, concurrency int, dataSourceSorted bool) Executor {
-	src := buildMockDataPhysicalPlan(sctx, srcExec)
+	src := buildMockDataPhysicalPlan(ctx, srcExec)
 
 	sg := new(core.PhysicalStreamAgg)
 	sg.AggFuncs = aggFuncs
 	sg.GroupByItems = groupItems
 	sg.SetSchema(schema)
-	sg.Init(sctx, nil, 0)
+	sg.Init(ctx, nil, 0)
 
 	var tail core.PhysicalPlan = sg
 	// if data source is not sorted, we have to attach sort, to make the input of stream-agg sorted
@@ -338,13 +338,13 @@ func buildStreamAggExecutor(sctx sessionctx.Context, srcExec Executor, schema *e
 			DataSources:  []core.PhysicalPlan{src},
 			SplitterType: splitter,
 			ByItemArrays: [][]expression.Expression{sg.GroupByItems},
-		}.Init(sctx, nil, 0)
+		}.Init(ctx, nil, 0)
 		plan.SetChildren(sg)
 	} else {
 		plan = sg
 	}
 
-	b := newExecutorBuilder(context.Background(), sctx, nil, nil, 0, false, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(ctx, nil, nil, 0, false, oracle.GlobalTxnScope)
 	return b.build(plan)
 }
 
@@ -504,8 +504,8 @@ func BenchmarkAggDistinct(b *testing.B) {
 	}
 }
 
-func buildWindowExecutor(sctx sessionctx.Context, windowFunc string, funcs int, frame *core.WindowFrame, srcExec Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) Executor {
-	src := buildMockDataPhysicalPlan(sctx, srcExec)
+func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, frame *core.WindowFrame, srcExec Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) Executor {
+	src := buildMockDataPhysicalPlan(ctx, srcExec)
 	win := new(core.PhysicalWindow)
 	win.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0)
 	winSchema := schema.Clone()
@@ -527,7 +527,7 @@ func buildWindowExecutor(sctx sessionctx.Context, windowFunc string, funcs int, 
 		default:
 			args = append(args, partitionBy[0])
 		}
-		desc, _ := aggregation.NewWindowFuncDesc(sctx, windowFunc, args)
+		desc, _ := aggregation.NewWindowFuncDesc(ctx, windowFunc, args)
 
 		win.WindowFuncDescs = append(win.WindowFuncDescs, desc)
 		winSchema.Append(&expression.Column{
@@ -542,7 +542,7 @@ func buildWindowExecutor(sctx sessionctx.Context, windowFunc string, funcs int, 
 	win.OrderBy = nil
 
 	win.SetSchema(winSchema)
-	win.Init(sctx, nil, 0)
+	win.Init(ctx, nil, 0)
 
 	var tail core.PhysicalPlan = win
 	if !dataSourceSorted {
@@ -571,13 +571,13 @@ func buildWindowExecutor(sctx sessionctx.Context, windowFunc string, funcs int, 
 			DataSources:  []plannercore.PhysicalPlan{src},
 			SplitterType: core.PartitionHashSplitterType,
 			ByItemArrays: [][]expression.Expression{byItems},
-		}.Init(sctx, nil, 0)
+		}.Init(ctx, nil, 0)
 		plan.SetChildren(win)
 	} else {
 		plan = win
 	}
 
-	b := newExecutorBuilder(context.Background(), sctx, nil, nil, 0, false, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(ctx, nil, nil, 0, false, oracle.GlobalTxnScope)
 	exec := b.build(plan)
 	return exec
 }
@@ -1317,7 +1317,7 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 		keyOff2IdxOff[i] = i
 	}
 
-	readerBuilder, err := newExecutorBuilder(context.Background(), tc.ctx, nil, nil, 0, false, oracle.GlobalTxnScope).
+	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil, 0, false, oracle.GlobalTxnScope).
 		newDataReaderBuilder(&mockPhysicalIndexReader{e: innerDS})
 	if err != nil {
 		return nil, err
@@ -1391,7 +1391,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
 	}
 
-	readerBuilder, err := newExecutorBuilder(context.Background(), tc.ctx, nil, nil, 0, false, oracle.GlobalTxnScope).
+	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil, 0, false, oracle.GlobalTxnScope).
 		newDataReaderBuilder(&mockPhysicalIndexReader{e: innerDS})
 	if err != nil {
 		return nil, err

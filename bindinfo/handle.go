@@ -17,7 +17,6 @@ package bindinfo
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/kv"
 	"runtime"
 	"strconv"
 	"strings"
@@ -25,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -134,7 +134,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
 
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnBindInfo)
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeContext, kv.InternalTxnBindInfo)
 	// No need to acquire the session context lock for ExecRestrictedSQL, it
 	// uses another background session.
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source
@@ -793,7 +793,7 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 		users:     make(map[string]struct{}),
 	}
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnBindInfo)
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeContext, kv.InternalTxnBindInfo)
 	// No need to acquire the session context lock for ExecRestrictedSQL, it
 	// uses another background session.
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT filter_type, filter_value FROM mysql.capture_plan_baselines_blacklist order by filter_type`)
@@ -1024,7 +1024,7 @@ func (h *BindHandle) SaveEvolveTasksToStore() {
 }
 
 func getEvolveParameters(sctx sessionctx.Context) (time.Duration, time.Time, time.Time, error) {
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnBindInfo)
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeContext, kv.InternalTxnBindInfo)
 	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(
 		ctx,
 		nil,

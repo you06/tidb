@@ -188,7 +188,7 @@ func (bq *brieQueue) clearTask(sc *stmtctx.StatementContext) {
 }
 
 func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
-	sc := &stmtctx.StatementContext{TimeZone: b.sctx.GetSessionVars().Location()}
+	sc := &stmtctx.StatementContext{TimeZone: b.ctx.GetSessionVars().Location()}
 	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return 0, err
@@ -202,7 +202,7 @@ func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
 
 func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) Executor {
 	e := &BRIEExec{
-		baseExecutor: newBaseExecutor(b.sctx, schema, 0),
+		baseExecutor: newBaseExecutor(b.ctx, schema, 0),
 		info: &brieTaskInfo{
 			kind: s.Kind,
 		},

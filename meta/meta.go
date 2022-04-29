@@ -122,7 +122,7 @@ type Meta struct {
 func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
 	txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	if txn.GetOption(kv.RequestSourceType).(string) == "" {
+	if txn.GetOption(kv.RequestSourceType) == nil {
 		txn.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
 	}
 	t := structure.NewStructure(txn, txn, mMetaPrefix)

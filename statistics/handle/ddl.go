@@ -16,6 +16,7 @@ package handle
 
 import (
 	"context"
+
 	"github.com/pingcap/tidb/kv"
 
 	"github.com/pingcap/errors"
@@ -185,7 +186,7 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 	}()
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeContext, kv.InternalTxnStats)
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
@@ -228,7 +229,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeContext, kv.InternalTxnStats)
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {

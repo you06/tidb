@@ -17,8 +17,9 @@ package handle
 import (
 	"context"
 	"encoding/json"
-	"github.com/pingcap/tidb/kv"
 	"time"
+
+	"github.com/pingcap/tidb/kv"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -32,7 +33,6 @@ import (
 // GCStats will garbage collect the useless stats info. For dropped tables, we will first update their version so that
 // other tidb could know that table is deleted.
 func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error {
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
 	lease := mathutil.MaxInt64(int64(h.Lease()), int64(ddlLease))
@@ -42,7 +42,7 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 		return nil
 	}
 	gcVer := now - offset
-	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_meta where version < %?", gcVer)
+	rows, _, err := h.execRestrictedSQL(context.Background(), "select table_id from mysql.stats_meta where version < %?", gcVer)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -55,7 +55,7 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 }
 
 func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error {
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
+	ctx := context.Background()
 	rows, _, err := h.execRestrictedSQL(ctx, "select is_index, hist_id from mysql.stats_histograms where table_id = %?", physicalID)
 	if err != nil {
 		return errors.Trace(err)
@@ -143,7 +143,7 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeContext, kv.InternalTxnStats)
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
@@ -203,7 +203,7 @@ func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeContext, kv.InternalTxnStats)
 	startTS := txn.StartTS()
 	for _, statsID := range statsIDs {
 		// We only update the version so that other tidb will know that this table is deleted.
@@ -242,7 +242,7 @@ func (h *Handle) removeDeletedExtendedStats(version uint64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	ctx := context.WithValue(context.Background(), kv.RequestSourceType, kv.InternalTxnStats)
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeContext, kv.InternalTxnStats)
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)

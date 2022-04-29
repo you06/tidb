@@ -618,7 +618,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetInTxn(true)
-	// Call sctx.Txn(true) to active pending txn.
+	// Call ctx.Txn(true) to active pending txn.
 	txnMode := s.Mode
 	if txnMode == "" {
 		txnMode = e.ctx.GetSessionVars().TxnMode

@@ -170,7 +170,7 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Exec
 	}
 	plan = core.InjectExtraProjection(plan)
 	// Build executor.
-	b := newExecutorBuilder(context.Background(), h.sctx, is, nil, 0, false, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(h.sctx, is, nil, 0, false, oracle.GlobalTxnScope)
 	return b.build(plan), nil
 }
 

@@ -15,7 +15,10 @@
 package telemetry
 
 import (
+	"context"
 	"time"
+
+	"github.com/pingcap/tidb/kv"
 
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -31,21 +34,22 @@ type telemetryData struct {
 	SlowQueryStats     *slowQueryStats         `json:"slowQueryStats"`
 }
 
-func generateTelemetryData(ctx sessionctx.Context, trackingID string) telemetryData {
+func generateTelemetryData(sctx sessionctx.Context, trackingID string) telemetryData {
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeContext, kv.InternalTxnTelemetry)
 	r := telemetryData{
 		ReportTimestamp: time.Now().Unix(),
 		TrackingID:      trackingID,
 	}
-	if h, err := getClusterHardware(ctx); err == nil {
+	if h, err := getClusterHardware(ctx, sctx); err == nil {
 		r.Hardware = h
 	}
-	if i, err := getClusterInfo(ctx); err == nil {
+	if i, err := getClusterInfo(ctx, sctx); err == nil {
 		r.Instances = i
 	}
-	if f, err := getFeatureUsage(ctx); err == nil {
+	if f, err := getFeatureUsage(ctx, sctx); err == nil {
 		r.FeatureUsage = f
 	}
-	if s, err := getSlowQueryStats(ctx); err == nil {
+	if s, err := getSlowQueryStats(ctx, sctx); err == nil {
 		r.SlowQueryStats = s
 	}
 

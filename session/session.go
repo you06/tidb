@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	stderrs "errors"
 	"fmt"
+	"runtime/debug"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -1225,6 +1226,9 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet, allo
 // getTableValue executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getTableValue(ctx context.Context, tblName string, varName string) (string, error) {
+	if ctx.Value(kv.RequestSourceTypeContext) == nil {
+		ctx = context.WithValue(ctx, kv.RequestSourceTypeContext, kv.InternalTxnSysVar)
+	}
 	rows, fields, err := s.ExecRestrictedSQL(ctx, nil, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, tblName, varName)
 	if err != nil {
 		return "", err
@@ -1606,11 +1610,13 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	if topsqlstate.TopSQLEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)
 	}
-	if tp := ctx.Value(kv.RequestSourceType); tp != nil {
-		s.sessionVars.InternalRequestSourceType = tp.(string)
-		defer func() {
-			s.sessionVars.InternalRequestSourceType = ""
-		}()
+	if !s.sessionVars.InTxn() {
+		if tp := ctx.Value(kv.RequestSourceTypeContext); tp != nil {
+			s.sessionVars.InternalRequestSourceType = tp.(string)
+			defer func() {
+				s.sessionVars.InternalRequestSourceType = ""
+			}()
+		}
 	}
 	execOption := sqlexec.GetExecOption(opts)
 	var se *session
@@ -1780,11 +1786,15 @@ func (s *session) withRestrictedSQLExecutor(ctx context.Context, opts []sqlexec.
 }
 
 func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	if tp := ctx.Value(kv.RequestSourceType); tp != nil {
-		s.sessionVars.InternalRequestSourceType = tp.(string)
-		defer func() {
-			s.sessionVars.InternalRequestSourceType = ""
-		}()
+	if s.sessionVars.InRestrictedSQL && !s.sessionVars.InTxn() {
+		if tp := ctx.Value(kv.RequestSourceTypeContext); tp != nil {
+			s.sessionVars.InternalRequestSourceType = tp.(string)
+			defer func() {
+				s.sessionVars.InternalRequestSourceType = ""
+			}()
+		} else {
+			panic("unexpected no type context" + string(debug.Stack()))
+		}
 	}
 	return s.withRestrictedSQLExecutor(ctx, opts, func(ctx context.Context, se *session) ([]chunk.Row, []*ast.ResultField, error) {
 		stmt, err := se.ParseWithParams(ctx, sql, params...)
@@ -2477,6 +2487,9 @@ func (s *session) NewTxn(ctx context.Context) error {
 	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
 	if s.GetSessionVars().InRestrictedSQL {
 		s.txn.SetOption(kv.RequestSourceInternal, true)
+		if tp := ctx.Value(kv.RequestSourceTypeContext); tp != nil {
+			s.txn.SetOption(kv.RequestSourceType, tp.(string))
+		}
 	}
 	return nil
 }
@@ -2725,8 +2738,8 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 }
 
 // loadCollationParameter loads collation parameter from mysql.tidb
-func loadCollationParameter(se *session) (bool, error) {
-	para, err := se.getTableValue(context.TODO(), mysql.TiDBTable, tidbNewCollationEnabled)
+func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
+	para, err := se.getTableValue(ctx, mysql.TiDBTable, tidbNewCollationEnabled)
 	if err != nil {
 		return false, err
 	}
@@ -2801,6 +2814,7 @@ var errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
+	ctx := context.WithValue(context.Background(), kv.RequestSourceTypeContext, kv.InternalTxnSysVar)
 	cfg := config.GetGlobalConfig()
 	if len(cfg.Plugin.Load) > 0 {
 		err := plugin.Load(context.Background(), plugin.Config{
@@ -2826,14 +2840,14 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ses[0].GetSessionVars().InRestrictedSQL = true
 
 	// get system tz from mysql.tidb
-	tz, err := ses[0].getTableValue(context.TODO(), mysql.TiDBTable, tidbSystemTZ)
+	tz, err := ses[0].getTableValue(ctx, mysql.TiDBTable, tidbSystemTZ)
 	if err != nil {
 		return nil, err
 	}
 	timeutil.SetSystemTZ(tz)
 
 	// get the flag from `mysql`.`tidb` which indicating if new collations are enabled.
-	newCollationEnabled, err := loadCollationParameter(ses[0])
+	newCollationEnabled, err := loadCollationParameter(ctx, ses[0])
 	if err != nil {
 		return nil, err
 	}
@@ -2877,7 +2891,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = executor.LoadOptRuleBlacklist(ses[5])
+	err = executor.LoadOptRuleBlacklist(ctx, ses[5])
 	if err != nil {
 		return nil, err
 	}

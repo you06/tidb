@@ -1029,7 +1029,7 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 		}
 	}()
 	for {
-		// Don't check sctx.Done() on purpose. If background worker get the signal and all
+		// Don't check ctx.Done() on purpose. If background worker get the signal and all
 		// exit immediately, session's goroutine doesn't know this and still calling Next(),
 		// it may block reading task.doneCh forever.
 		select {
@@ -1201,7 +1201,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			return errors.Trace(err)
 		}
 
-		// If sctx is cancelled, `Next` may return empty result when the actual data is not empty. To avoid producing
+		// If ctx is cancelled, `Next` may return empty result when the actual data is not empty. To avoid producing
 		// false-positive error logs that cause confusion, exit in this case.
 		select {
 		case <-ctx.Done():

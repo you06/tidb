@@ -177,6 +177,7 @@ func LoadDDLVars(ctx sessionctx.Context) error {
 
 // LoadGlobalVars loads global variable from mysql.global_variables.
 func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
+	ctx = context.WithValue(ctx, kv.RequestSourceTypeContext, kv.InternalTxnDDL)
 	if e, ok := sctx.(sqlexec.RestrictedSQLExecutor); ok {
 		var buf strings.Builder
 		buf.WriteString(loadGlobalVars)

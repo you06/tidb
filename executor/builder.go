@@ -85,8 +85,7 @@ var (
 // executorBuilder builds an Executor from a Plan.
 // The InfoSchema must not change during execution.
 type executorBuilder struct {
-	ctx              context.Context
-	sctx             sessionctx.Context
+	ctx              sessionctx.Context
 	is               infoschema.InfoSchema
 	snapshotTS       uint64 // The ts for snapshot-read. A select statement without for update will use this ts
 	forUpdateTS      uint64 // The ts should be used by insert/update/delete/select-for-update statement
@@ -118,10 +117,9 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, replicaReadScope string) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, replicaReadScope string) *executorBuilder {
 	return &executorBuilder{
 		ctx:              ctx,
-		sctx:             sctx,
 		is:               is,
 		Ti:               ti,
 		snapshotTSCached: isStaleness,
@@ -147,7 +145,7 @@ type MockExecutorBuilder struct {
 // NewMockExecutorBuilderForTest is ONLY used in test.
 func NewMockExecutorBuilderForTest(sctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, replicaReadScope string) *MockExecutorBuilder {
 	return &MockExecutorBuilder{
-		executorBuilder: newExecutorBuilder(context.Background(), sctx, is, ti, snapshotTS, isStaleness, replicaReadScope)}
+		executorBuilder: newExecutorBuilder(sctx, is, ti, snapshotTS, isStaleness, replicaReadScope)}
 }
 
 // Build builds an executor tree according to `p`.
@@ -311,7 +309,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 
 func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Executor {
 	e := &CancelDDLJobsExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		jobIDs:       v.JobIDs,
 	}
 	return e
@@ -319,14 +317,14 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 
 func (b *executorBuilder) buildChange(v *plannercore.Change) Executor {
 	return &ChangeExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		ChangeStmt:   v.ChangeStmt,
 	}
 }
 
 func (b *executorBuilder) buildShowNextRowID(v *plannercore.ShowNextRowID) Executor {
 	e := &ShowNextRowIDExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		tblName:      v.TableName,
 	}
 	return e
@@ -337,7 +335,7 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 	// next will be called after transaction has been committed.
 	// We need the transaction to get DDLInfo.
 	e := &ShowDDLExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 	}
 
 	var err error
@@ -366,12 +364,12 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 }
 
 func (b *executorBuilder) buildShowDDLJobs(v *plannercore.PhysicalShowDDLJobs) Executor {
-	loc := b.sctx.GetSessionVars().Location()
+	loc := b.ctx.GetSessionVars().Location()
 	ddlJobRetriever := DDLJobRetriever{TZLoc: loc}
 	e := &ShowDDLJobsExec{
 		jobNumber:       int(v.JobNumber),
 		is:              b.is,
-		baseExecutor:    newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		DDLJobRetriever: ddlJobRetriever,
 	}
 	return e
@@ -379,7 +377,7 @@ func (b *executorBuilder) buildShowDDLJobs(v *plannercore.PhysicalShowDDLJobs) E
 
 func (b *executorBuilder) buildShowDDLJobQueries(v *plannercore.ShowDDLJobQueries) Executor {
 	e := &ShowDDLJobQueriesExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		jobIDs:       v.JobIDs,
 	}
 	return e
@@ -387,7 +385,7 @@ func (b *executorBuilder) buildShowDDLJobQueries(v *plannercore.ShowDDLJobQuerie
 
 func (b *executorBuilder) buildShowSlow(v *plannercore.ShowSlow) Executor {
 	e := &ShowSlowExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		ShowSlow:     v.ShowSlow,
 	}
 	return e
@@ -447,7 +445,7 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 	}
 
 	e := &CheckTableExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dbName:       v.DBName,
 		table:        v.Table,
 		indexInfos:   v.IndexInfos,
@@ -503,7 +501,7 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) Executo
 		return nil
 	}
 	e := &RecoverIndexExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		columns:      buildIdxColsConcatHandleCols(tblInfo, index.Meta()),
 		index:        index,
 		table:        t,
@@ -563,7 +561,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) Executo
 		return nil
 	}
 	e := &CleanupIndexExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		columns:      buildIdxColsConcatHandleCols(tblInfo, index.Meta()),
 		index:        index,
 		table:        t,
@@ -582,7 +580,7 @@ func (b *executorBuilder) buildCheckIndexRange(v *plannercore.CheckIndexRange) E
 		return nil
 	}
 	e := &CheckIndexRangeExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		handleRanges: v.HandleRanges,
 		table:        tb.Meta(),
 		is:           b.is,
@@ -600,7 +598,7 @@ func (b *executorBuilder) buildCheckIndexRange(v *plannercore.CheckIndexRange) E
 
 func (b *executorBuilder) buildChecksumTable(v *plannercore.ChecksumTable) Executor {
 	e := &ChecksumTableExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		tables:       make(map[int64]*checksumContext),
 		done:         false,
 	}
@@ -616,19 +614,19 @@ func (b *executorBuilder) buildChecksumTable(v *plannercore.ChecksumTable) Execu
 }
 
 func (b *executorBuilder) buildReloadExprPushdownBlacklist(v *plannercore.ReloadExprPushdownBlacklist) Executor {
-	return &ReloadExprPushdownBlacklistExec{baseExecutor{ctx: b.sctx}}
+	return &ReloadExprPushdownBlacklistExec{baseExecutor{ctx: b.ctx}}
 }
 
 func (b *executorBuilder) buildReloadOptRuleBlacklist(v *plannercore.ReloadOptRuleBlacklist) Executor {
-	return &ReloadOptRuleBlacklistExec{baseExecutor{ctx: b.sctx}}
+	return &ReloadOptRuleBlacklistExec{baseExecutor{ctx: b.ctx}}
 }
 
 func (b *executorBuilder) buildAdminPlugins(v *plannercore.AdminPlugins) Executor {
-	return &AdminPluginsExec{baseExecutor: baseExecutor{ctx: b.sctx}, Action: v.Action, Plugins: v.Plugins}
+	return &AdminPluginsExec{baseExecutor: baseExecutor{ctx: b.ctx}, Action: v.Action, Plugins: v.Plugins}
 }
 
 func (b *executorBuilder) buildDeallocate(v *plannercore.Deallocate) Executor {
-	base := newBaseExecutor(b.sctx, nil, v.ID())
+	base := newBaseExecutor(b.ctx, nil, v.ID())
 	base.initCap = chunk.ZeroCapacity
 	e := &DeallocateExec{
 		baseExecutor: base,
@@ -647,13 +645,13 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		return nil
 	}
 	// Build 'select for update' using the 'for update' ts.
-	b.forUpdateTS = b.sctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 
 	src := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
 	}
-	if !b.sctx.GetSessionVars().InTxn() {
+	if !b.ctx.GetSessionVars().InTxn() {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
@@ -661,7 +659,7 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		return src
 	}
 	e := &SelectLockExec{
-		baseExecutor:       newBaseExecutor(b.sctx, v.Schema(), v.ID(), src),
+		baseExecutor:       newBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
 		Lock:               v.Lock,
 		tblID2Handle:       v.TblID2Handle,
 		tblID2PhysTblIDCol: v.TblID2PhysTblIDCol,
@@ -688,8 +686,8 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 	if b.err != nil {
 		return nil
 	}
-	n := int(mathutil.MinUint64(v.Count, uint64(b.sctx.GetSessionVars().MaxChunkSize)))
-	base := newBaseExecutor(b.sctx, v.Schema(), v.ID(), childExec)
+	n := int(mathutil.MinUint64(v.Count, uint64(b.ctx.GetSessionVars().MaxChunkSize)))
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
 	base.initCap = n
 	e := &LimitExec{
 		baseExecutor: base,
@@ -711,7 +709,7 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 }
 
 func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
-	base := newBaseExecutor(b.sctx, v.Schema(), v.ID())
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity
 	return &PrepareExec{
 		baseExecutor: base,
@@ -722,7 +720,7 @@ func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 
 func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 	e := &ExecuteExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		is:           b.is,
 		name:         v.Name,
 		usingVars:    v.UsingVars,
@@ -748,7 +746,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		}
 
 		if v.SnapshotTS != 0 {
-			is, err := domain.GetDomain(b.sctx).GetSnapshotInfoSchema(b.snapshotTS)
+			is, err := domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
 			if err != nil {
 				panic(err)
 			}
@@ -773,7 +771,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 
 func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 	e := &ShowExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		Tp:           v.Tp,
 		DBName:       model.NewCIStr(v.DBName),
 		Table:        v.Table,
@@ -808,7 +806,7 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 	case *ast.BRIEStmt:
 		return b.buildBRIE(s, v.Schema())
 	}
-	base := newBaseExecutor(b.sctx, v.Schema(), v.ID())
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity
 	e := &SimpleExec{
 		baseExecutor:    base,
@@ -821,7 +819,7 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 }
 
 func (b *executorBuilder) buildSet(v *plannercore.Set) Executor {
-	base := newBaseExecutor(b.sctx, v.Schema(), v.ID())
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity
 	e := &SetExecutor{
 		baseExecutor: base,
@@ -832,7 +830,7 @@ func (b *executorBuilder) buildSet(v *plannercore.Set) Executor {
 
 func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) Executor {
 	return &SetConfigExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		p:            v,
 	}
 }
@@ -846,16 +844,16 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 			return nil
 		}
 	}
-	b.forUpdateTS = b.sctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selectExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
 	}
 	var baseExec baseExecutor
 	if selectExec != nil {
-		baseExec = newBaseExecutor(b.sctx, nil, v.ID(), selectExec)
+		baseExec = newBaseExecutor(b.ctx, nil, v.ID(), selectExec)
 	} else {
-		baseExec = newBaseExecutor(b.sctx, nil, v.ID())
+		baseExec = newBaseExecutor(b.ctx, nil, v.ID())
 	}
 	baseExec.initCap = chunk.ZeroCapacity
 
@@ -894,7 +892,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		return nil
 	}
 	insertVal := &InsertValues{
-		baseExecutor: newBaseExecutor(b.sctx, nil, v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
 		Table:        tbl,
 		Columns:      v.Columns,
 		GenExprs:     v.GenCols.Exprs,
@@ -911,7 +909,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		IgnoreLines:        v.IgnoreLines,
 		ColumnAssignments:  v.ColumnAssignments,
 		ColumnsAndUserVars: v.ColumnsAndUserVars,
-		Ctx:                b.sctx,
+		Ctx:                b.ctx,
 	}
 	columnNames := loadDataInfo.initFieldMappings()
 	err := loadDataInfo.initLoadColumns(columnNames)
@@ -920,7 +918,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		return nil
 	}
 	loadDataExec := &LoadDataExec{
-		baseExecutor: newBaseExecutor(b.sctx, nil, v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
 		IsLocal:      v.IsLocal,
 		OnDuplicate:  v.OnDuplicate,
 		loadDataInfo: loadDataInfo,
@@ -934,22 +932,22 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 
 func (b *executorBuilder) buildLoadStats(v *plannercore.LoadStats) Executor {
 	e := &LoadStatsExec{
-		baseExecutor: newBaseExecutor(b.sctx, nil, v.ID()),
-		info:         &LoadStatsInfo{v.Path, b.sctx},
+		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
+		info:         &LoadStatsInfo{v.Path, b.ctx},
 	}
 	return e
 }
 
 func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor {
 	e := &IndexAdviseExec{
-		baseExecutor: newBaseExecutor(b.sctx, nil, v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
 		IsLocal:      v.IsLocal,
 		indexAdviseInfo: &IndexAdviseInfo{
 			Path:        v.Path,
 			MaxMinutes:  v.MaxMinutes,
 			MaxIndexNum: v.MaxIndexNum,
 			LinesInfo:   v.LinesInfo,
-			Ctx:         b.sctx,
+			Ctx:         b.ctx,
 		},
 	}
 	return e
@@ -958,13 +956,13 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) Executor {
 	if v.Load {
 		e := &PlanReplayerLoadExec{
-			baseExecutor: newBaseExecutor(b.sctx, nil, v.ID()),
-			info:         &PlanReplayerLoadInfo{Path: v.File, Ctx: b.sctx},
+			baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
+			info:         &PlanReplayerLoadInfo{Path: v.File, Ctx: b.ctx},
 		}
 		return e
 	}
 	e := &PlanReplayerSingleExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		ExecStmt:     v.ExecStmt,
 		Analyze:      v.Analyze,
 	}
@@ -980,7 +978,7 @@ func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
 
 func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 	e := &GrantExec{
-		baseExecutor: newBaseExecutor(b.sctx, nil, 0),
+		baseExecutor: newBaseExecutor(b.ctx, nil, 0),
 		Privs:        grant.Privs,
 		ObjectType:   grant.ObjectType,
 		Level:        grant.Level,
@@ -994,8 +992,8 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 
 func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 	e := &RevokeExec{
-		baseExecutor: newBaseExecutor(b.sctx, nil, 0),
-		ctx:          b.sctx,
+		baseExecutor: newBaseExecutor(b.ctx, nil, 0),
+		ctx:          b.ctx,
 		Privs:        revoke.Privs,
 		ObjectType:   revoke.ObjectType,
 		Level:        revoke.Level,
@@ -1007,10 +1005,10 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 
 func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 	e := &DDLExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		stmt:         v.Statement,
 		is:           b.is,
-		tempTableDDL: temptable.GetTemporaryTableDDL(b.sctx),
+		tempTableDDL: temptable.GetTemporaryTableDDL(b.ctx),
 	}
 	return e
 }
@@ -1019,7 +1017,7 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 // at build().
 func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 	t := &TraceExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		stmtNode:     v.StmtNode,
 		builder:      b,
 		format:       v.Format,
@@ -1029,7 +1027,7 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 	}
 	if t.format == plannercore.TraceFormatLog && !t.optimizerTrace {
 		return &SortExec{
-			baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID(), t),
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), t),
 			ByItems: []*plannerutil.ByItems{
 				{Expr: &expression.Column{
 					Index:   0,
@@ -1045,12 +1043,12 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 // buildExplain builds a explain executor. `e.rows` collects final result to `ExplainExec`.
 func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 	explainExec := &ExplainExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		explain:      v,
 	}
 	if v.Analyze {
-		if b.sctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil {
-			b.sctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+		if b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil {
+			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 		}
 		explainExec.analyzeExec = b.build(v.TargetPlan)
 	}
@@ -1063,7 +1061,7 @@ func (b *executorBuilder) buildSelectInto(v *plannercore.SelectInto) Executor {
 		return nil
 	}
 	return &SelectIntoExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID(), child),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), child),
 		intoOpt:      v.IntoOpt,
 	}
 }
@@ -1091,7 +1089,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		}
 		return x
 	}
-	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID(), reader)}
+	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), reader)}
 	// Get the handle column index of the below Plan.
 	us.belowHandleCols = v.HandleCols
 	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
@@ -1108,7 +1106,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	}
 
 	startTS, err := b.getSnapshotTS()
-	sessionVars := b.sctx.GetSessionVars()
+	sessionVars := b.ctx.GetSessionVars()
 	if err != nil {
 		b.err = err
 		return nil
@@ -1184,7 +1182,7 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 			// continue
 		} else {
 			if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
-				store := b.sctx.GetStore()
+				store := b.ctx.GetStore()
 				cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
 			}
 		}
@@ -1213,11 +1211,11 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 	}
 
 	e := &MergeJoinExec{
-		stmtCtx:      b.sctx.GetSessionVars().StmtCtx,
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID(), leftExec, rightExec),
+		stmtCtx:      b.ctx.GetSessionVars().StmtCtx,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
 		compareFuncs: v.CompareFuncs,
 		joiner: newJoiner(
-			b.sctx,
+			b.ctx,
 			v.JoinType,
 			v.JoinType == plannercore.RightOuterJoin,
 			defaultValues,
@@ -1284,7 +1282,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 
 	e := &HashJoinExec{
-		baseExecutor:    newBaseExecutor(b.sctx, v.Schema(), v.ID(), leftExec, rightExec),
+		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
 		concurrency:     v.Concurrency,
 		joinType:        v.JoinType,
 		isOuterJoin:     v.JoinType.IsOuterJoin(),
@@ -1341,7 +1339,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
 	e.joiners = make([]joiner, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
-		e.joiners[i] = newJoiner(b.sctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
+		e.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
 			v.OtherConditions, lhsTypes, rhsTypes, childrenUsedSchema)
 	}
 	executorCountHashJoinExec.Inc()
@@ -1380,9 +1378,9 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 	if b.err != nil {
 		return nil
 	}
-	sessionVars := b.sctx.GetSessionVars()
+	sessionVars := b.ctx.GetSessionVars()
 	e := &HashAggExec{
-		baseExecutor:    newBaseExecutor(b.sctx, v.Schema(), v.ID(), src),
+		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
 		sc:              sessionVars.StmtCtx,
 		PartialAggFuncs: make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
 		GroupByItems:    v.GroupByItems,
@@ -1425,7 +1423,7 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 	partialOrdinal := 0
 	for i, aggDesc := range v.AggFuncs {
 		if e.isUnparallelExec {
-			e.PartialAggFuncs = append(e.PartialAggFuncs, aggfuncs.Build(b.sctx, aggDesc, i))
+			e.PartialAggFuncs = append(e.PartialAggFuncs, aggfuncs.Build(b.ctx, aggDesc, i))
 		} else {
 			ordinal := []int{partialOrdinal}
 			partialOrdinal++
@@ -1434,8 +1432,8 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 				partialOrdinal++
 			}
 			partialAggDesc, finalDesc := aggDesc.Split(ordinal)
-			partialAggFunc := aggfuncs.Build(b.sctx, partialAggDesc, i)
-			finalAggFunc := aggfuncs.Build(b.sctx, finalDesc, i)
+			partialAggFunc := aggfuncs.Build(b.ctx, partialAggDesc, i)
+			finalAggFunc := aggfuncs.Build(b.ctx, finalDesc, i)
 			e.PartialAggFuncs = append(e.PartialAggFuncs, partialAggFunc)
 			e.FinalAggFuncs = append(e.FinalAggFuncs, finalAggFunc)
 			if partialAggDesc.Name == ast.AggFuncGroupConcat {
@@ -1461,8 +1459,8 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) Execu
 		return nil
 	}
 	e := &StreamAggExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID(), src),
-		groupChecker: newVecGroupChecker(b.sctx, v.GroupByItems),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
+		groupChecker: newVecGroupChecker(b.ctx, v.GroupByItems),
 		aggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
 	}
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
@@ -1471,7 +1469,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) Execu
 		e.defaultVal = chunk.NewChunkWithCapacity(retTypes(e), 1)
 	}
 	for i, aggDesc := range v.AggFuncs {
-		aggFunc := aggfuncs.Build(b.sctx, aggDesc, i)
+		aggFunc := aggfuncs.Build(b.ctx, aggDesc, i)
 		e.aggFuncs = append(e.aggFuncs, aggFunc)
 		if e.defaultVal != nil {
 			value := aggDesc.GetDefaultValue()
@@ -1489,7 +1487,7 @@ func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) Execu
 		return nil
 	}
 	e := &SelectionExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID(), childExec),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
 		filters:      v.Conditions,
 	}
 	return e
@@ -1501,8 +1499,8 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 		return nil
 	}
 	e := &ProjectionExec{
-		baseExecutor:     newBaseExecutor(b.sctx, v.Schema(), v.ID(), childExec),
-		numWorkers:       int64(b.sctx.GetSessionVars().ProjectionConcurrency()),
+		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
+		numWorkers:       int64(b.ctx.GetSessionVars().ProjectionConcurrency()),
 		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
 		calculateNoDelay: v.CalculateNoDelay,
 	}
@@ -1510,7 +1508,7 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 	// If the calculation row count for this Projection operator is smaller
 	// than a Chunk size, we turn back to the un-parallel Projection
 	// implementation to reduce the goroutine overhead.
-	if int64(v.StatsCount()) < int64(b.sctx.GetSessionVars().MaxChunkSize) {
+	if int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
 
@@ -1527,7 +1525,7 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 		b.err = errors.Errorf("buildTableDual failed, invalid row count for dual table: %v", v.RowCount)
 		return nil
 	}
-	base := newBaseExecutor(b.sctx, v.Schema(), v.ID())
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = v.RowCount
 	e := &TableDualExec{
 		baseExecutor: base,
@@ -1563,7 +1561,7 @@ func (b *executorBuilder) getReadTS() (uint64, error) {
 		return b.snapshotTS, nil
 	}
 
-	if b.sctx.GetSessionVars().IsPessimisticReadConsistency() {
+	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
 		if err := b.refreshForUpdateTSForRC(); err != nil {
 			return 0, err
 		}
@@ -1575,9 +1573,9 @@ func (b *executorBuilder) getReadTS() (uint64, error) {
 		return b.snapshotTS, nil
 	}
 
-	snapshotTS := b.sctx.GetSessionVars().SnapshotTS
+	snapshotTS := b.ctx.GetSessionVars().SnapshotTS
 	if snapshotTS == 0 {
-		txn, err := b.sctx.Txn(true)
+		txn, err := b.ctx.Txn(true)
 		if err != nil {
 			return 0, err
 		}
@@ -1595,7 +1593,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 	switch v.DBName.L {
 	case util.MetricSchemaName.L:
 		return &MemTableReaderExec{
-			baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 			table:        v.Table,
 			retriever: &MetricRetriever{
 				table:     v.Table,
@@ -1606,7 +1604,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 		switch v.Table.Name.L {
 		case strings.ToLower(infoschema.TableClusterConfig):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &clusterConfigRetriever{
 					extractor: v.Extractor.(*plannercore.ClusterTableExtractor),
@@ -1614,7 +1612,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableClusterLoad):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &clusterServerInfoRetriever{
 					extractor:      v.Extractor.(*plannercore.ClusterTableExtractor),
@@ -1623,7 +1621,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableClusterHardware):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &clusterServerInfoRetriever{
 					extractor:      v.Extractor.(*plannercore.ClusterTableExtractor),
@@ -1632,7 +1630,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableClusterSystemInfo):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &clusterServerInfoRetriever{
 					extractor:      v.Extractor.(*plannercore.ClusterTableExtractor),
@@ -1641,7 +1639,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableClusterLog):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &clusterLogRetriever{
 					extractor: v.Extractor.(*plannercore.ClusterLogTableExtractor),
@@ -1649,7 +1647,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableTiDBHotRegionsHistory):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &hotRegionsHistoryRetriver{
 					extractor: v.Extractor.(*plannercore.HotRegionsHistoryTableExtractor),
@@ -1657,7 +1655,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableInspectionResult):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &inspectionResultRetriever{
 					extractor: v.Extractor.(*plannercore.InspectionResultTableExtractor),
@@ -1666,7 +1664,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableInspectionSummary):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &inspectionSummaryRetriever{
 					table:     v.Table,
@@ -1676,7 +1674,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableInspectionRules):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &inspectionRuleRetriever{
 					extractor: v.Extractor.(*plannercore.InspectionRuleTableExtractor),
@@ -1684,7 +1682,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableMetricSummary):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &MetricsSummaryRetriever{
 					table:     v.Table,
@@ -1694,7 +1692,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableMetricSummaryByLabel):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &MetricsSummaryByLabelRetriever{
 					table:     v.Table,
@@ -1704,7 +1702,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableTiKVRegionPeers):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &tikvRegionPeersRetriever{
 					extractor: v.Extractor.(*plannercore.TikvRegionPeersExtractor),
@@ -1745,7 +1743,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableAttributes),
 			strings.ToLower(infoschema.TablePlacementPolicies):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &memtableRetriever{
 					table:     v.Table,
@@ -1756,7 +1754,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 		case strings.ToLower(infoschema.TableTiDBTrx),
 			strings.ToLower(infoschema.ClusterTableTiDBTrx):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &tidbTrxTableRetriever{
 					table:   v.Table,
@@ -1765,7 +1763,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableDataLockWaits):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &dataLockWaitsTableRetriever{
 					table:   v.Table,
@@ -1775,7 +1773,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 		case strings.ToLower(infoschema.TableDeadlocks),
 			strings.ToLower(infoschema.ClusterTableDeadlocks):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &deadlocksTableRetriever{
 					table:   v.Table,
@@ -1787,7 +1785,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory),
 			strings.ToLower(infoschema.ClusterTableStatementsSummary):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &stmtSummaryTableRetriever{
 					table:     v.Table,
@@ -1797,7 +1795,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableColumns):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &hugeMemTableRetriever{
 					table:     v.Table,
@@ -1808,9 +1806,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 
 		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
 			memTracker := memory.NewTracker(v.ID(), -1)
-			memTracker.AttachTo(b.sctx.GetSessionVars().StmtCtx.MemTracker)
+			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &slowQueryRetriever{
 					table:      v.Table,
@@ -1821,7 +1819,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 		case strings.ToLower(infoschema.TableStorageStats):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &tableStorageStatsRetriever{
 					table:      v.Table,
@@ -1830,17 +1828,17 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				},
 			}
 		case strings.ToLower(infoschema.TableDDLJobs):
-			loc := b.sctx.GetSessionVars().Location()
+			loc := b.ctx.GetSessionVars().Location()
 			ddlJobRetriever := DDLJobRetriever{TZLoc: loc}
 			return &DDLJobsReaderExec{
-				baseExecutor:    newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				is:              b.is,
 				DDLJobRetriever: ddlJobRetriever,
 			}
 		case strings.ToLower(infoschema.TableTiFlashTables),
 			strings.ToLower(infoschema.TableTiFlashSegments):
 			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &TiFlashSystemTableRetriever{
 					table:      v.Table,
@@ -1852,7 +1850,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 	}
 	tb, _ := b.is.TableByID(v.Table.ID)
 	return &TableScanExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		t:            tb,
 		columns:      v.Columns,
 	}
@@ -1864,7 +1862,7 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 		return nil
 	}
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID(), childExec),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
@@ -1878,7 +1876,7 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 		return nil
 	}
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID(), childExec),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
@@ -1921,10 +1919,10 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 		outerExec, innerExec = rightChild, leftChild
 		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
 	}
-	tupleJoiner := newJoiner(b.sctx, v.JoinType, v.InnerChildIdx == 0,
+	tupleJoiner := newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
 		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil)
 	serialExec := &NestedLoopApplyExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID(), outerExec, innerExec),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), outerExec, innerExec),
 		innerExec:    innerExec,
 		outerExec:    outerExec,
 		outerFilter:  outerFilter,
@@ -1932,7 +1930,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 		outer:        v.JoinType != plannercore.InnerJoin,
 		joiner:       tupleJoiner,
 		outerSchema:  v.OuterSchema,
-		ctx:          b.sctx,
+		ctx:          b.ctx,
 		canUseCache:  v.CanUseCache,
 	}
 	executorCounterNestedLoopApplyExec.Inc()
@@ -1958,14 +1956,14 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 			innerExecs = append(innerExecs, clonedInnerExec)
 			corCols = append(corCols, corCol)
 			innerFilters = append(innerFilters, innerFilter.Clone())
-			joiners = append(joiners, newJoiner(b.sctx, v.JoinType, v.InnerChildIdx == 0,
+			joiners = append(joiners, newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
 				defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil))
 		}
 
 		allExecs := append([]Executor{outerExec}, innerExecs...)
 
 		return &ParallelNestedLoopApplyExec{
-			baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID(), allExecs...),
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), allExecs...),
 			innerExecs:   innerExecs,
 			outerExec:    outerExec,
 			outerFilter:  outerFilter,
@@ -1985,7 +1983,7 @@ func (b *executorBuilder) buildMaxOneRow(v *plannercore.PhysicalMaxOneRow) Execu
 	if b.err != nil {
 		return nil
 	}
-	base := newBaseExecutor(b.sctx, v.Schema(), v.ID(), childExec)
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
 	base.initCap = 2
 	base.maxChunkSize = 2
 	e := &MaxOneRowExec{baseExecutor: base}
@@ -2001,8 +1999,8 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 		}
 	}
 	e := &UnionExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID(), childExecs...),
-		concurrency:  b.sctx.GetSessionVars().UnionConcurrency(),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExecs...),
+		concurrency:  b.ctx.GetSessionVars().UnionConcurrency(),
 	}
 	return e
 }
@@ -2029,7 +2027,7 @@ func buildHandleColsForSplit(sc *stmtctx.StatementContext, tbInfo *model.TableIn
 }
 
 func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor {
-	base := newBaseExecutor(b.sctx, v.Schema(), v.ID())
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = 1
 	base.maxChunkSize = 1
 	if v.IndexInfo != nil {
@@ -2044,7 +2042,7 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 			valueLists:     v.ValueLists,
 		}
 	}
-	handleCols := buildHandleColsForSplit(b.sctx.GetSessionVars().StmtCtx, v.TableInfo)
+	handleCols := buildHandleColsForSplit(b.ctx.GetSessionVars().StmtCtx, v.TableInfo)
 	if len(v.ValueLists) > 0 {
 		return &SplitTableRegionExec{
 			baseExecutor:   base,
@@ -2090,15 +2088,15 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
 		return nil
 	}
-	b.forUpdateTS = b.sctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
 	}
-	base := newBaseExecutor(b.sctx, v.Schema(), v.ID(), selExec)
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), selExec)
 	base.initCap = chunk.ZeroCapacity
 	var assignFlag []int
-	assignFlag, b.err = getAssignFlag(b.sctx, v, selExec.Schema().Len())
+	assignFlag, b.err = getAssignFlag(b.ctx, v, selExec.Schema().Len())
 	if b.err != nil {
 		return nil
 	}
@@ -2147,12 +2145,12 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
 		return nil
 	}
-	b.forUpdateTS = b.sctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
 	}
-	base := newBaseExecutor(b.sctx, v.Schema(), v.ID(), selExec)
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), selExec)
 	base.initCap = chunk.ZeroCapacity
 	deleteExec := &DeleteExec{
 		baseExecutor:   base,
@@ -2167,7 +2165,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 // PointGet executor will get conflict error if the ForUpdateTS is older than the latest commitTS,
 // so we don't need to update now for better latency.
 func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.PhysicalPlan) error {
-	txnCtx := b.sctx.GetSessionVars().TxnCtx
+	txnCtx := b.ctx.GetSessionVars().TxnCtx
 	if !txnCtx.IsPessimistic {
 		return nil
 	}
@@ -2175,12 +2173,12 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 		return nil
 	}
 	// Activate the invalid txn, use the txn startTS as newForUpdateTS
-	txn, err := b.sctx.Txn(false)
+	txn, err := b.ctx.Txn(false)
 	if err != nil {
 		return err
 	}
 	if !txn.Valid() {
-		_, err := b.sctx.Txn(true)
+		_, err := b.ctx.Txn(true)
 		if err != nil {
 			return err
 		}
@@ -2188,46 +2186,46 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 	}
 	// The Repeatable Read transaction use Read Committed level to read data for writing (insert, update, delete, select for update),
 	// We should always update/refresh the for-update-ts no matter the isolation level is RR or RC.
-	if b.sctx.GetSessionVars().IsPessimisticReadConsistency() {
+	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
 		return b.refreshForUpdateTSForRC()
 	}
-	return UpdateForUpdateTS(b.sctx, 0)
+	return UpdateForUpdateTS(b.ctx, 0)
 }
 
 // refreshForUpdateTSForRC is used to refresh the for-update-ts for reading data at read consistency level in pessimistic transaction.
 // It could use the cached tso from the statement future to avoid get tso many times.
 func (b *executorBuilder) refreshForUpdateTSForRC() error {
 	defer func() {
-		b.snapshotTS = b.sctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+		b.snapshotTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	}()
 	// The first time read-consistency read is executed and `RcReadCheckTS` is enabled, try to use
 	// the last valid ts as the for update read ts.
-	if b.sctx.GetSessionVars().StmtCtx.RCCheckTS {
-		rcReadTS := b.sctx.GetSessionVars().TxnCtx.LastRcReadTs
+	if b.ctx.GetSessionVars().StmtCtx.RCCheckTS {
+		rcReadTS := b.ctx.GetSessionVars().TxnCtx.LastRcReadTs
 		if rcReadTS == 0 {
-			rcReadTS = b.sctx.GetSessionVars().TxnCtx.StartTS
+			rcReadTS = b.ctx.GetSessionVars().TxnCtx.StartTS
 		}
-		return UpdateForUpdateTS(b.sctx, rcReadTS)
+		return UpdateForUpdateTS(b.ctx, rcReadTS)
 	}
-	future := b.sctx.GetSessionVars().TxnCtx.GetStmtFutureForRC()
+	future := b.ctx.GetSessionVars().TxnCtx.GetStmtFutureForRC()
 	if future == nil {
 		return nil
 	}
 	newForUpdateTS, waitErr := future.Wait()
 	if waitErr != nil {
 		logutil.BgLogger().Warn("wait tso failed",
-			zap.Uint64("startTS", b.sctx.GetSessionVars().TxnCtx.StartTS),
+			zap.Uint64("startTS", b.ctx.GetSessionVars().TxnCtx.StartTS),
 			zap.Error(waitErr))
 	}
-	b.sctx.GetSessionVars().TxnCtx.SetStmtFutureForRC(nil)
+	b.ctx.GetSessionVars().TxnCtx.SetStmtFutureForRC(nil)
 	// If newForUpdateTS is 0, it will force to get a new for-update-ts from PD.
-	return UpdateForUpdateTS(b.sctx, newForUpdateTS)
+	return UpdateForUpdateTS(b.ctx, newForUpdateTS)
 }
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O}
-	_, offset := timeutil.Zone(b.sctx.GetSessionVars().Location())
-	sc := b.sctx.GetSessionVars().StmtCtx
+	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
+	sc := b.ctx.GetSessionVars().StmtCtx
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -2237,9 +2235,9 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		startTS = uint64(val.(int))
 	})
 	base := baseAnalyzeExec{
-		ctx:         b.sctx,
+		ctx:         b.ctx,
 		tableID:     task.TableID,
-		concurrency: b.sctx.GetSessionVars().IndexSerialScanConcurrency(),
+		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
 			Flags:          sc.PushDownFlags(),
@@ -2276,7 +2274,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 }
 
 func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64) *analyzeTask {
-	h := domain.GetDomain(b.sctx).StatsHandle()
+	h := domain.GetDomain(b.ctx).StatsHandle()
 	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.TableID.GetStatisticsID())
 	analyzeTask := b.buildAnalyzeIndexPushdown(task, opts, "")
 	if statsTbl.Pseudo {
@@ -2382,8 +2380,8 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		}
 	}
 
-	_, offset := timeutil.Zone(b.sctx.GetSessionVars().Location())
-	sc := b.sctx.GetSessionVars().StmtCtx
+	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
+	sc := b.ctx.GetSessionVars().StmtCtx
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -2392,7 +2390,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
-	statsHandle := domain.GetDomain(b.sctx).StatsHandle()
+	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
 	count, modifyCount, err := statsHandle.StatsMetaCountAndModifyCount(task.TableID.GetStatisticsID())
 	if err != nil {
 		b.err = err
@@ -2408,7 +2406,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 	if opts[ast.AnalyzeOptNumSamples] == 0 {
 		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
 		if *sampleRate < 0 {
-			*sampleRate = b.getAdjustedSampleRate(b.sctx, task)
+			*sampleRate = b.getAdjustedSampleRate(b.ctx, task)
 			if task.PartitionName != "" {
 				sc.AppendNote(errors.Errorf(
 					"Analyze use auto adjusted sample rate %f for table %s.%s's partition %s",
@@ -2434,9 +2432,9 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		JobInfo:       describeV2AnalyzeJobInfo(task, autoAnalyze, opts, *sampleRate),
 	}
 	base := baseAnalyzeExec{
-		ctx:         b.sctx,
+		ctx:         b.ctx,
 		tableID:     task.TableID,
-		concurrency: b.sctx.GetSessionVars().DistSQLScanConcurrency(),
+		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeFullSampling,
 			Flags:          sc.PushDownFlags(),
@@ -2471,7 +2469,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 			e.analyzePB.ColReq.PrimaryPrefixColumnIds = tables.PrimaryPrefixColumnIDs(task.TblInfo)
 		}
 	}
-	b.err = plannercore.SetPBColumnsDefaultValue(b.sctx, e.analyzePB.ColReq.ColumnsInfo, task.ColsInfo)
+	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, task.ColsInfo)
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
 }
 
@@ -2546,7 +2544,7 @@ func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Co
 	if task.PartitionName != "" {
 		sqlexec.MustFormatSQL(sql, " partition(%n)", task.PartitionName)
 	}
-	rows, _, err := b.sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(context.TODO(), nil, sql.String())
+	rows, _, err := b.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(context.TODO(), nil, sql.String())
 	if err != nil {
 		return 0, false
 	}
@@ -2575,8 +2573,8 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		task.ColsInfo = cols
 	}
 
-	_, offset := timeutil.Zone(b.sctx.GetSessionVars().Location())
-	sc := b.sctx.GetSessionVars().StmtCtx
+	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
+	sc := b.ctx.GetSessionVars().StmtCtx
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -2586,9 +2584,9 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		startTS = uint64(val.(int))
 	})
 	base := baseAnalyzeExec{
-		ctx:         b.sctx,
+		ctx:         b.ctx,
 		tableID:     task.TableID,
-		concurrency: b.sctx.GetSessionVars().DistSQLScanConcurrency(),
+		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
 			Flags:          sc.PushDownFlags(),
@@ -2640,12 +2638,12 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		e.analyzePB.Tp = tipb.AnalyzeType_TypeMixed
 		e.commonHandle = task.CommonHandleInfo
 	}
-	b.err = plannercore.SetPBColumnsDefaultValue(b.sctx, e.analyzePB.ColReq.ColumnsInfo, cols)
+	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
 }
 
 func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64) *analyzeTask {
-	h := domain.GetDomain(b.sctx).StatsHandle()
+	h := domain.GetDomain(b.ctx).StatsHandle()
 	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.TableID.GetStatisticsID())
 	analyzeTask := b.buildAnalyzeColumnsPushdown(task, opts, "", nil)
 	if statsTbl.Pseudo {
@@ -2662,7 +2660,7 @@ func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColu
 	if statistics.IsAnalyzed(col.Flag) {
 		oldHist = col.Histogram.Copy()
 	} else {
-		d, err := col.LastAnalyzePos.ConvertTo(b.sctx.GetSessionVars().StmtCtx, col.Tp)
+		d, err := col.LastAnalyzePos.ConvertTo(b.ctx.GetSessionVars().StmtCtx, col.Tp)
 		if err != nil {
 			b.err = err
 			return nil
@@ -2705,7 +2703,7 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 			return
 		}
 		base := baseAnalyzeExec{
-			ctx:         b.sctx,
+			ctx:         b.ctx,
 			tableID:     task.TableID,
 			opts:        opts,
 			concurrency: concurrency,
@@ -2753,7 +2751,7 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 			return
 		}
 		base := baseAnalyzeExec{
-			ctx:         b.sctx,
+			ctx:         b.ctx,
 			tableID:     task.TableID,
 			opts:        opts,
 			concurrency: concurrency,
@@ -2780,14 +2778,14 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 
 func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 	e := &AnalyzeExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 		opts:         v.Opts,
 		OptionsMap:   v.OptionsMap,
 	}
-	enableFastAnalyze := b.sctx.GetSessionVars().EnableFastAnalyze
+	enableFastAnalyze := b.ctx.GetSessionVars().EnableFastAnalyze
 	autoAnalyze := ""
-	if b.sctx.GetSessionVars().InRestrictedSQL {
+	if b.ctx.GetSessionVars().InRestrictedSQL {
 		autoAnalyze = "auto "
 	}
 	for _, task := range v.ColTasks {
@@ -2797,7 +2795,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 			if enableFastAnalyze {
 				b.buildAnalyzeFastColumn(e, task, v.Opts)
 			} else {
-				columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.sctx, model.NewCIStr(task.AnalyzeInfo.DBName), task.TblInfo.Name, task.ColsInfo, task.TblInfo)
+				columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx, model.NewCIStr(task.AnalyzeInfo.DBName), task.TblInfo.Name, task.ColsInfo, task.TblInfo)
 				if err != nil {
 					b.err = err
 					return nil
@@ -3007,7 +3005,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	}
 
 	e := &IndexLookUpJoin{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID(), outerExec),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), outerExec),
 		outerCtx: outerCtx{
 			rowTypes:  outerTypes,
 			hashTypes: outerHashTypes,
@@ -3028,7 +3026,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		finished:      &atomic.Value{},
 	}
 	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
-	e.joiner = newJoiner(b.sctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema)
+	e.joiner = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema)
 	outerKeyCols := make([]int, len(v.OuterJoinKeys))
 	for i := 0; i < len(v.OuterJoinKeys); i++ {
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
@@ -3123,7 +3121,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	}
 
 	e := &IndexLookUpMergeJoin{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID(), outerExec),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), outerExec),
 		outerMergeCtx: outerMergeCtx{
 			rowTypes:      outerTypes,
 			filter:        outerFilter,
@@ -3152,7 +3150,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
 	joiners := make([]joiner, e.ctx.GetSessionVars().IndexLookupJoinConcurrency())
 	for i := 0; i < len(joiners); i++ {
-		joiners[i] = newJoiner(b.sctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema)
+		joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema)
 	}
 	e.joiners = joiners
 	return e
@@ -3188,7 +3186,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	if v.StoreType == kv.TiFlash {
 		tablePlans = []plannercore.PhysicalPlan{v.GetTablePlan()}
 	}
-	dagReq, streaming, err := constructDAGReq(b.sctx, tablePlans, v.StoreType)
+	dagReq, streaming, err := constructDAGReq(b.ctx, tablePlans, v.StoreType)
 	if err != nil {
 		return nil, err
 	}
@@ -3211,7 +3209,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 	e := &TableReaderExecutor{
-		baseExecutor:     newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:            dagReq,
 		startTS:          startTS,
 		readReplicaScope: b.readReplicaScope,
@@ -3234,7 +3232,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	} else {
 		e.feedback = statistics.NewQueryFeedback(getFeedbackStatsTableID(e.ctx, tbl), ts.Hist, int64(ts.StatsCount()), ts.Desc)
 	}
-	collect := statistics.CollectFeedback(b.sctx.GetSessionVars().StmtCtx, e.feedback, len(ts.Ranges))
+	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(ts.Ranges))
 	// Do not collect the feedback when the table is the partition table.
 	if collect && tbl.Meta().Partition != nil {
 		collect = false
@@ -3243,11 +3241,11 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		e.feedback.Invalidate()
 	}
 	e.dagPB.CollectRangeCounts = &collect
-	if v.StoreType == kv.TiDB && b.sctx.GetSessionVars().User != nil {
+	if v.StoreType == kv.TiDB && b.ctx.GetSessionVars().User != nil {
 		// User info is used to do privilege check. It is only used in TiDB cluster memory table.
 		e.dagPB.User = &tipb.UserIdentity{
-			UserName: b.sctx.GetSessionVars().User.Username,
-			UserHost: b.sctx.GetSessionVars().User.Hostname,
+			UserName: b.ctx.GetSessionVars().User.Username,
+			UserHost: b.ctx.GetSessionVars().User.Hostname,
 		}
 	}
 
@@ -3265,7 +3263,7 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 		return nil
 	}
 	gather := &MPPGather{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
@@ -3281,7 +3279,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return nil
 	}
 	failpoint.Inject("checkUseMPP", func(val failpoint.Value) {
-		if val.(bool) != useMPPExecution(b.sctx, v) {
+		if val.(bool) != useMPPExecution(b.ctx, v) {
 			if val.(bool) {
 				b.err = errors.New("expect mpp but not used")
 			} else {
@@ -3290,7 +3288,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 			failpoint.Return(nil)
 		}
 	})
-	if useMPPExecution(b.sctx, v) {
+	if useMPPExecution(b.ctx, v) {
 		return b.buildMPPGather(v)
 	}
 	ts, err := v.GetTableScan()
@@ -3313,10 +3311,10 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	}
 
 	ret.ranges = ts.Ranges
-	sctx := b.sctx.GetSessionVars().StmtCtx
+	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
-	if !b.sctx.GetSessionVars().UseDynamicPartitionPrune() {
+	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
 	// When isPartition is set, it means the union rewriting is done, so a partition reader is preferred.
@@ -3331,7 +3329,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 
 	tmp, _ := b.is.TableByID(ts.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(b.sctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
+	partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
 	if err != nil {
 		b.err = err
 		return nil
@@ -3344,7 +3342,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return &TableDualExec{baseExecutor: *ret.base()}
 	}
 	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
-		sctx:       b.sctx,
+		sctx:       b.ctx,
 		partitions: partitions,
 	}
 
@@ -3446,7 +3444,7 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 		for i, date := range content.keys {
 			locateKey[keyColOffsets[i]] = date
 		}
-		p, err := partitionTbl.GetPartitionByRow(builder.sctx, locateKey)
+		p, err := partitionTbl.GetPartitionByRow(builder.ctx, locateKey)
 		if err != nil {
 			return nil, false, nil, err
 		}
@@ -3466,7 +3464,7 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 }
 
 func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexReader) (*IndexReaderExecutor, error) {
-	dagReq, streaming, err := constructDAGReq(b.sctx, v.IndexPlans, kv.TiKV)
+	dagReq, streaming, err := constructDAGReq(b.ctx, v.IndexPlans, kv.TiKV)
 	if err != nil {
 		return nil, err
 	}
@@ -3484,7 +3482,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		return nil, err
 	}
 	e := &IndexReaderExecutor{
-		baseExecutor:     newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:            dagReq,
 		startTS:          startTS,
 		readReplicaScope: b.readReplicaScope,
@@ -3507,12 +3505,12 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
 	} else {
 		tblID := e.physicalTableID
-		if b.sctx.GetSessionVars().UseDynamicPartitionPrune() {
+		if b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 			tblID = e.table.Meta().ID
 		}
 		e.feedback = statistics.NewQueryFeedback(tblID, is.Hist, int64(is.StatsCount()), is.Desc)
 	}
-	collect := statistics.CollectFeedback(b.sctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
+	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
 	// Do not collect the feedback when the table is the partition table.
 	if collect && tbl.Meta().Partition != nil {
 		collect = false
@@ -3547,10 +3545,10 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 	}
 
 	ret.ranges = is.Ranges
-	sctx := b.sctx.GetSessionVars().StmtCtx
+	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 
-	if !b.sctx.GetSessionVars().UseDynamicPartitionPrune() {
+	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
 	// When isPartition is set, it means the union rewriting is done, so a partition reader is preferred.
@@ -3569,7 +3567,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 
 	tmp, _ := b.is.TableByID(is.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(b.sctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
+	partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
 	if err != nil {
 		b.err = err
 		return nil
@@ -3579,7 +3577,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 }
 
 func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, val table.Table, err error) {
-	tableReq, tableStreaming, err := constructDAGReq(b.sctx, plans, kv.TiKV)
+	tableReq, tableStreaming, err := constructDAGReq(b.ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, false, nil, err
 	}
@@ -3623,7 +3621,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		// Should output pid col.
 		handleLen++
 	}
-	indexReq, indexStreaming, err := buildIndexReq(b.sctx, len(is.Index.Columns), handleLen, v.IndexPlans)
+	indexReq, indexStreaming, err := buildIndexReq(b.ctx, len(is.Index.Columns), handleLen, v.IndexPlans)
 	if err != nil {
 		return nil, err
 	}
@@ -3648,7 +3646,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	}
 
 	e := &IndexLookUpExecutor{
-		baseExecutor:      newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:             indexReq,
 		startTS:           startTS,
 		table:             tbl,
@@ -3679,7 +3677,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	// Do not collect the feedback for table request.
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
-	collectIndex := statistics.CollectFeedback(b.sctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
+	collectIndex := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
 	// Do not collect the feedback when the table is the partition table.
 	if collectIndex && tbl.Meta().GetPartitionInfo() != nil {
 		collectIndex = false
@@ -3723,11 +3721,11 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	ret.ranges = is.Ranges
 	executorCounterIndexLookUpExecutor.Inc()
 
-	sctx := b.sctx.GetSessionVars().StmtCtx
+	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
-	if !b.sctx.GetSessionVars().UseDynamicPartitionPrune() {
+	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
 
@@ -3745,7 +3743,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 
 	tmp, _ := b.is.TableByID(is.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(b.sctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
+	partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
 	if err != nil {
 		b.err = err
 		return nil
@@ -3775,7 +3773,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		feedbacks = append(feedbacks, feedback)
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
-			tempReq, tempStreaming, err = buildIndexReq(b.sctx, len(is.Index.Columns), ts.HandleCols.NumCols(), v.PartialPlans[i])
+			tempReq, tempStreaming, err = buildIndexReq(b.ctx, len(is.Index.Columns), ts.HandleCols.NumCols(), v.PartialPlans[i])
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
 		} else {
@@ -3810,7 +3808,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	}
 
 	e := &IndexMergeReaderExecutor{
-		baseExecutor:             newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor:             newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPBs:                   partialReqs,
 		startTS:                  startTS,
 		table:                    tblInfo,
@@ -3847,7 +3845,7 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 		return nil
 	}
 	ret.ranges = make([][]*ranger.Range, 0, len(v.PartialPlans))
-	sctx := b.sctx.GetSessionVars().StmtCtx
+	sctx := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(v.PartialPlans); i++ {
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
 			ret.ranges = append(ret.ranges, is.Ranges)
@@ -3863,7 +3861,7 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	executorCounterIndexMergeReaderExecutor.Inc()
 
-	if !b.sctx.GetSessionVars().UseDynamicPartitionPrune() {
+	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
 
@@ -3872,7 +3870,7 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 	}
 
 	tmp, _ := b.is.TableByID(ts.Table.ID)
-	partitions, err := partitionPruning(b.sctx, tmp.(table.PartitionedTable), v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
+	partitions, err := partitionPruning(b.ctx, tmp.(table.PartitionedTable), v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
 	if err != nil {
 		b.err = err
 		return nil
@@ -3936,7 +3934,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 			return nil, err
 		}
 		exec := &SelectionExec{
-			baseExecutor: newBaseExecutor(builder.sctx, v.Schema(), v.ID(), childExec),
+			baseExecutor: newBaseExecutor(builder.ctx, v.Schema(), v.ID(), childExec),
 			filters:      v.Conditions,
 		}
 		err = exec.open(ctx)
@@ -3975,7 +3973,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		return nil, err
 	}
 	tbInfo := e.table.Meta()
-	if tbInfo.GetPartitionInfo() == nil || !builder.sctx.GetSessionVars().UseDynamicPartitionPrune() {
+	if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		if v.IsCommonHandle {
 			kvRanges, err := buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 			if err != nil {
@@ -4151,7 +4149,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	}
 	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
 	e.resultHandler = &tableResultHandler{}
-	result, err := builder.SelectResult(ctx, builder.sctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+	result, err := builder.SelectResult(ctx, builder.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
 	if err != nil {
 		return nil, err
 	}
@@ -4189,7 +4187,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return nil, err
 	}
 	tbInfo := e.table.Meta()
-	if tbInfo.GetPartitionInfo() == nil || !builder.sctx.GetSessionVars().UseDynamicPartitionPrune() {
+	if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		kvRanges, err := buildKvRangesForIndexJoin(e.ctx, e.physicalTableID, e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memoryTracker, interruptSignal)
 		if err != nil {
 			return nil, err
@@ -4236,7 +4234,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 	}
 
 	tbInfo := e.table.Meta()
-	if tbInfo.GetPartitionInfo() == nil || !builder.sctx.GetSessionVars().UseDynamicPartitionPrune() {
+	if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		e.kvRanges, err = buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
@@ -4296,8 +4294,8 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Contex
 	}
 
 	e := &ProjectionExec{
-		baseExecutor:     newBaseExecutor(builder.sctx, v.Schema(), v.ID(), childExec),
-		numWorkers:       int64(builder.sctx.GetSessionVars().ProjectionConcurrency()),
+		baseExecutor:     newBaseExecutor(builder.ctx, v.Schema(), v.ID(), childExec),
+		numWorkers:       int64(builder.ctx.GetSessionVars().ProjectionConcurrency()),
 		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
 		calculateNoDelay: v.CalculateNoDelay,
 	}
@@ -4305,7 +4303,7 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Contex
 	// If the calculation row count for this Projection operator is smaller
 	// than a Chunk size, we turn back to the un-parallel Projection
 	// implementation to reduce the goroutine overhead.
-	if int64(v.StatsCount()) < int64(builder.sctx.GetSessionVars().MaxChunkSize) {
+	if int64(v.StatsCount()) < int64(builder.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
 	err = e.open(ctx)
@@ -4429,7 +4427,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) Executor {
 	if b.err != nil {
 		return nil
 	}
-	base := newBaseExecutor(b.sctx, v.Schema(), v.ID(), childExec)
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
 	groupByItems := make([]expression.Expression, 0, len(v.PartitionBy))
 	for _, item := range v.PartitionBy {
 		groupByItems = append(groupByItems, item.Col)
@@ -4442,22 +4440,22 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) Executor {
 	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
 	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
 	for _, desc := range v.WindowFuncDescs {
-		aggDesc, err := aggregation.NewAggFuncDescForWindowFunc(b.sctx, desc, false)
+		aggDesc, err := aggregation.NewAggFuncDescForWindowFunc(b.ctx, desc, false)
 		if err != nil {
 			b.err = err
 			return nil
 		}
-		agg := aggfuncs.BuildWindowFunctions(b.sctx, aggDesc, resultColIdx, orderByCols)
+		agg := aggfuncs.BuildWindowFunctions(b.ctx, aggDesc, resultColIdx, orderByCols)
 		windowFuncs = append(windowFuncs, agg)
 		partialResult, _ := agg.AllocPartialResult()
 		partialResults = append(partialResults, partialResult)
 		resultColIdx++
 	}
 
-	if b.sctx.GetSessionVars().EnablePipelinedWindowExec {
+	if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
 		exec := &PipelinedWindowExec{
 			baseExecutor:   base,
-			groupChecker:   newVecGroupChecker(b.sctx, groupByItems),
+			groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
 			numWindowFuncs: len(v.WindowFuncDescs),
 		}
 
@@ -4516,13 +4514,13 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) Executor {
 	}
 	return &WindowExec{baseExecutor: base,
 		processor:      processor,
-		groupChecker:   newVecGroupChecker(b.sctx, groupByItems),
+		groupChecker:   newVecGroupChecker(b.ctx, groupByItems),
 		numWindowFuncs: len(v.WindowFuncDescs),
 	}
 }
 
 func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleExec {
-	base := newBaseExecutor(b.sctx, v.Schema(), v.ID())
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	shuffle := &ShuffleExec{
 		baseExecutor: base,
 		concurrency:  v.Concurrency,
@@ -4536,7 +4534,7 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		}
 	case plannercore.PartitionRangeSplitterType:
 		for i, byItems := range v.ByItemArrays {
-			splitters[i] = buildPartitionRangeSplitter(b.sctx, shuffle.concurrency, byItems)
+			splitters[i] = buildPartitionRangeSplitter(b.ctx, shuffle.concurrency, byItems)
 		}
 	default:
 		panic("Not implemented. Should not reach here.")
@@ -4557,7 +4555,7 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		receivers := make([]*shuffleReceiver, len(v.DataSources))
 		for j, dataSource := range v.DataSources {
 			receivers[j] = &shuffleReceiver{
-				baseExecutor: newBaseExecutor(b.sctx, dataSource.Schema(), dataSource.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, dataSource.Schema(), dataSource.ID()),
 			}
 		}
 
@@ -4569,7 +4567,7 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 			stub := plannercore.PhysicalShuffleReceiverStub{
 				Receiver:   (unsafe.Pointer)(receivers[j]),
 				DataSource: dataSource,
-			}.Init(b.sctx, dataSource.Stats(), dataSource.SelectBlockOffset(), nil)
+			}.Init(b.ctx, dataSource.Stats(), dataSource.SelectBlockOffset(), nil)
 			stub.SetSchema(dataSource.Schema())
 			v.Tails[j].SetChildren(stub)
 		}
@@ -4590,7 +4588,7 @@ func (b *executorBuilder) buildShuffleReceiverStub(v *plannercore.PhysicalShuffl
 }
 
 func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor {
-	base := newBaseExecutor(b.sctx, v.Schema(), v.ID())
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.initCap = chunk.ZeroCapacity
 
 	e := &SQLBindExec{
@@ -4665,9 +4663,9 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		b.err = err
 		return nil
 	}
-	decoder := NewRowDecoder(b.sctx, plan.Schema(), plan.TblInfo)
+	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
-		baseExecutor:     newBaseExecutor(b.sctx, plan.Schema(), plan.ID()),
+		baseExecutor:     newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
 		tblInfo:          plan.TblInfo,
 		idxInfo:          plan.IndexInfo,
 		rowDecoder:       decoder,
@@ -4765,17 +4763,17 @@ func getFeedbackStatsTableID(ctx sessionctx.Context, t table.Table) int64 {
 }
 
 func (b *executorBuilder) buildAdminShowTelemetry(v *plannercore.AdminShowTelemetry) Executor {
-	return &AdminShowTelemetryExec{baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID())}
+	return &AdminShowTelemetryExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID())}
 }
 
 func (b *executorBuilder) buildAdminResetTelemetryID(v *plannercore.AdminResetTelemetryID) Executor {
-	return &AdminResetTelemetryIDExec{baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID())}
+	return &AdminResetTelemetryIDExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID())}
 }
 
 func (builder *dataReaderBuilder) partitionPruning(tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
 	columns []*expression.Column, columnNames types.NameSlice) ([]table.PhysicalTable, error) {
 	builder.once.Do(func() {
-		condPruneResult, err := partitionPruning(builder.executorBuilder.sctx, tbl, conds, partitionNames, columns, columnNames)
+		condPruneResult, err := partitionPruning(builder.executorBuilder.ctx, tbl, conds, partitionNames, columns, columnNames)
 		builder.once.condPruneResult = condPruneResult
 		builder.once.err = err
 	})
@@ -4829,7 +4827,7 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 		return nil
 	}
 	e := &TableSampleExecutor{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		table:        v.TableInfo,
 		startTS:      startTS,
 	}
@@ -4844,7 +4842,7 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 		}
 	} else if v.TableSampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
 		e.sampler = newTableRegionSampler(
-			b.sctx, v.TableInfo, startTS, v.TableSampleInfo.Partitions, v.Schema(),
+			b.ctx, v.TableInfo, startTS, v.TableSampleInfo.Partitions, v.Schema(),
 			v.TableSampleInfo.FullSchema, e.retFieldTypes, v.Desc)
 	}
 
@@ -4862,13 +4860,13 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 	}
 
 	// 2. Build tables to store intermediate results.
-	chkSize := b.sctx.GetSessionVars().MaxChunkSize
+	chkSize := b.ctx.GetSessionVars().MaxChunkSize
 	tps := seedExec.base().retFieldTypes
 	// iterOutTbl will be constructed in CTEExec.Open().
 	var resTbl cteutil.Storage
 	var iterInTbl cteutil.Storage
 
-	storageMap, ok := b.sctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
+	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
 	if !ok {
 		b.err = errors.New("type assertion for CTEStorageMap failed")
 		return nil
@@ -4910,7 +4908,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 	}
 
 	return &CTEExec{
-		baseExecutor:  newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor:  newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		seedExec:      seedExec,
 		recursiveExec: recursiveExec,
 		resTbl:        resTbl,
@@ -4926,7 +4924,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 }
 
 func (b *executorBuilder) buildCTETableReader(v *plannercore.PhysicalCTETable) Executor {
-	storageMap, ok := b.sctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
+	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
 	if !ok {
 		b.err = errors.New("type assertion for CTEStorageMap failed")
 		return nil
@@ -4937,7 +4935,7 @@ func (b *executorBuilder) buildCTETableReader(v *plannercore.PhysicalCTETable) E
 		return nil
 	}
 	return &CTETableReaderExec{
-		baseExecutor: newBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		iterInTbl:    storages.IterInTbl,
 		chkIdx:       0,
 	}
@@ -4955,7 +4953,7 @@ func (b *executorBuilder) validCanReadCacheTable(tbl *model.TableInfo) error {
 		return nil
 	}
 
-	sessionVars := b.sctx.GetSessionVars()
+	sessionVars := b.ctx.GetSessionVars()
 
 	// Temporary table can't switch into cache table. so the following code will not cause confusion
 	if sessionVars.TxnCtx.IsStaleness || b.isStaleness {
@@ -4973,7 +4971,7 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 	// Some tools like dumpling use history read to dump all table's records and will be fail if we return an error.
 	// So we do not check SnapshotTS here
 
-	sessionVars := b.sctx.GetSessionVars()
+	sessionVars := b.ctx.GetSessionVars()
 
 	if tbl.TempTableType == model.TempTableLocal && sessionVars.SnapshotTS != 0 {
 		return errors.New("can not read local temporary table when 'tidb_snapshot' is set")
@@ -4989,10 +4987,10 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64) kv.MemBuffer {
 	tbl, ok := b.is.TableByID(tblInfo.ID)
 	if !ok {
-		b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.sctx.GetSessionVars().CurrentDB, tblInfo.Name))
+		b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.ctx.GetSessionVars().CurrentDB, tblInfo.Name))
 		return nil
 	}
-	sessVars := b.sctx.GetSessionVars()
+	sessVars := b.ctx.GetSessionVars()
 	leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
 	cacheData, loading := tbl.(table.CachedTable).TryReadFromCache(startTS, leaseDuration)
 	if cacheData != nil {
@@ -5001,8 +4999,8 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 	} else if loading {
 		// continue
 	} else {
-		if !b.sctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
-			tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.sctx.GetStore(), startTS, leaseDuration)
+		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
+			tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
 		}
 	}
 	return nil

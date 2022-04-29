@@ -112,6 +112,8 @@ func (r ReplicaReadType) IsClosestRead() bool {
 }
 
 const (
+	// RequestSourceTypeContext is used as the key of request source type in context.
+	RequestSourceTypeContext = "request_source_type_context"
 	// InternalTxnMeta is the type of the miscellaneous meta usage.
 	InternalTxnMeta = "meta"
 	// InternalTxnDDL is the type of inner txns in ddl module.
@@ -126,4 +128,8 @@ const (
 	InternalTxnBindInfo = "bind_info"
 	// InternalTxnSysVar is the type of sys var txn.
 	InternalTxnSysVar = "sys_var"
+	// InternalTxnTelemetry is the type of telemetry.
+	InternalTxnTelemetry = "telemetry"
+	// InternalTxnAdmin is the type of admin operations.
+	InternalTxnAdmin = "admin"
 )
