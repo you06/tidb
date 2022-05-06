@@ -39,7 +39,7 @@ require (
 	github.com/jedib0t/go-pretty/v6 v6.2.2
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
-	github.com/opentracing/basictracer-go v1.0.0
+	github.com/opentracing/basictracer-go v1.1.0
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20220314162537-ab58fbf40580
@@ -64,6 +64,7 @@ require (
 	github.com/stretchr/testify v1.7.2-0.20220504104629-106ec21d14df
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.1-0.20220406091203-f73ec0e675f4
+	github.com/tikv/minitrace-go v0.0.0-20210623164044-529c511f20f8
 	github.com/tikv/pd/client v0.0.0-20220307081149-841fa61e9710
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -205,3 +206,5 @@ replace github.com/pingcap/tidb/parser => ./parser
 
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
+
+replace github.com/tikv/minitrace-go => github.com/you06/minitrace-go v0.0.0-20220505084728-a0abc4dae26a

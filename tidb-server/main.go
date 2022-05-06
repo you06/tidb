@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/kvcache"
+	local_tracer "github.com/pingcap/tidb/util/localtracer"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
@@ -774,6 +775,7 @@ func setupTracing() {
 	if err != nil {
 		log.Fatal("setup jaeger tracer failed", zap.String("error message", err.Error()))
 	}
+	tracer = local_tracer.NewLocalTracer()
 	opentracing.SetGlobalTracer(tracer)
 }
 
