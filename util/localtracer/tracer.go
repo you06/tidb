@@ -13,6 +13,8 @@ var (
 	//_ opentracing.TracerContextWithSpanExtension = &LocalTracer{}
 )
 
+const InitRefLen = 4
+
 type LocalTraceContextKey struct{}
 
 var LocalTraceKey = LocalTraceContextKey{}
@@ -29,7 +31,9 @@ func (l *LocalTracer) StartSpan(operationName string, opts ...opentracing.StartS
 	if len(opts) == 0 {
 		return l.startRootSpan()
 	}
-	sso := opentracing.StartSpanOptions{}
+	sso := opentracing.StartSpanOptions{
+		References: make([]opentracing.SpanReference, 0, InitRefLen),
+	}
 	for _, o := range opts {
 		o.Apply(&sso)
 	}
