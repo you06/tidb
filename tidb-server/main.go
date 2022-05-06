@@ -26,6 +26,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/uber/jaeger-client-go"
+
+	tracing "github.com/uber/jaeger-client-go/config"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -762,7 +766,11 @@ func setupTracing() {
 	cfg := config.GetGlobalConfig()
 	tracingCfg := cfg.OpenTracing.ToTracingConfig()
 	tracingCfg.ServiceName = "TiDB"
-	tracer, _, err := tracingCfg.NewTracer()
+	opts := []tracing.Option{tracing.PoolSpans(true)}
+	if tracingCfg.Reporter.LocalAgentHostPort == "" {
+		opts = append(opts, tracing.Reporter(jaeger.NewNullReporter()))
+	}
+	tracer, _, err := tracingCfg.NewTracer(opts...)
 	if err != nil {
 		log.Fatal("setup jaeger tracer failed", zap.String("error message", err.Error()))
 	}
