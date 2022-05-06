@@ -2,16 +2,28 @@ package local_tracer
 
 import (
 	"context"
+	"sync"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/log"
 	"github.com/tikv/minitrace-go"
-	"sync"
 )
 
 var (
-	_ opentracing.Span        = &Span{}
-	_ opentracing.SpanContext = &SpanContext{}
+	_    opentracing.Span        = &Span{}
+	_    opentracing.SpanContext = &SpanContext{}
+	pool sync.Pool
 )
+
+func init() {
+	pool = sync.Pool{
+		New: func() interface{} {
+			return &Span{
+				baggage: make(map[string]string),
+			}
+		},
+	}
+}
 
 type SpanContext struct {
 	span *Span
@@ -28,20 +40,26 @@ type Span struct {
 }
 
 func newSpan(tracer *LocalTracer, ctx context.Context) *Span {
-	return &Span{
-		baggage: make(map[string]string),
-		ctx:     ctx,
-		tracer:  tracer,
-	}
+	span, _ := pool.Get().(*Span)
+	span.ctx = ctx
+	span.tracer = tracer
+	return span
 }
 
 func (s *Span) Finish() {
 	if s.spanHandle != nil {
 		s.spanHandle.Finish()
+		s.spanHandle = nil
 	}
 	if s.traceHandle != nil {
 		s.traceHandle.Finish()
+		s.traceHandle = nil
 	}
+	s.ctx = nil
+	for k := range s.baggage {
+		delete(s.baggage, k)
+	}
+	pool.Put(s)
 }
 
 func (s *Span) FinishWithOptions(_ opentracing.FinishOptions) {
