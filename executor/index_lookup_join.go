@@ -16,6 +16,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"runtime"
 	"runtime/trace"
 	"sort"
@@ -530,11 +531,12 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 	}
 	lookUpContents := make([]*indexJoinLookUpContent, 0, task.outerResult.Len())
 	keyBuf := make([]byte, 0, 64)
+	totalOuterKeyString := make([]string, 0)
 	for chkIdx := 0; chkIdx < task.outerResult.NumChunks(); chkIdx++ {
 		chk := task.outerResult.GetChunk(chkIdx)
 		numRows := chk.NumRows()
 		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-			dLookUpKey, dHashKey, err := iw.constructDatumLookupKey(task, chkIdx, rowIdx)
+			dLookUpKey, dHashKey, outerKeys, err := iw.constructDatumLookupKey(task, chkIdx, rowIdx)
 			if err != nil {
 				return nil, err
 			}
@@ -543,6 +545,11 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 				task.encodedLookUpKeys[chkIdx].AppendNull(0)
 				continue
 			}
+			var outerKeysString []string
+			for _, key := range outerKeys {
+				outerKeysString = append(outerKeysString, key.GetString())
+			}
+			totalOuterKeyString = append(totalOuterKeyString, fmt.Sprintf("%v", outerKeysString))
 			keyBuf = keyBuf[:0]
 			keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, dHashKey...)
 			if err != nil {
@@ -568,17 +575,30 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 		task.memTracker.Consume(task.encodedLookUpKeys[i].MemoryUsage())
 	}
 	lookUpContents = iw.sortAndDedupLookUpContents(lookUpContents)
+	totalInnerKeysString := make([]string, 0)
+	for _, content := range lookUpContents {
+		innerKeys := make([]string, 0)
+		for _, key := range content.keys {
+			innerKeys = append(innerKeys, key.GetString())
+		}
+		totalInnerKeysString = append(totalInnerKeysString, fmt.Sprintf("%v", innerKeys))
+	}
+	logutil.BgLogger().Error("keys for IndexJoin",
+		zap.String("innerWorker", fmt.Sprintf("%p", iw)),
+		zap.String("outerKeys", fmt.Sprintf("%v", totalOuterKeyString)),
+		zap.String("innerKeys", fmt.Sprintf("%v", totalInnerKeysString)))
 	return lookUpContents, nil
 }
 
-func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, rowIdx int) ([]types.Datum, []types.Datum, error) {
+func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, rowIdx int) ([]types.Datum, []types.Datum, []types.Datum, error) {
 	if task.outerMatch != nil && !task.outerMatch[chkIdx][rowIdx] {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	outerRow := task.outerResult.GetChunk(chkIdx).GetRow(rowIdx)
 	sc := iw.ctx.GetSessionVars().StmtCtx
 	keyLen := len(iw.keyCols)
 	dLookupKey := make([]types.Datum, 0, keyLen)
+	outerKeys := make([]types.Datum, 0, keyLen)
 	dHashKey := make([]types.Datum, 0, len(iw.hashCols))
 	for i, hashCol := range iw.outerCtx.hashCols {
 		outerValue := outerRow.GetDatum(hashCol, iw.outerCtx.rowTypes[hashCol])
@@ -586,34 +606,35 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, row
 		// IndexNestedLoopJoin, thus the filter will always be false if
 		// outerValue is null, and we don't need to lookup it.
 		if outerValue.IsNull() {
-			return nil, nil, nil
+			return nil, nil, nil, nil
 		}
 		innerColType := iw.rowTypes[iw.hashCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
 		if err != nil {
 			// If the converted outerValue overflows, we don't need to lookup it.
 			if terror.ErrorEqual(err, types.ErrOverflow) {
-				return nil, nil, nil
+				return nil, nil, nil, nil
 			}
 			if terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.Tp == mysql.TypeSet || innerColType.Tp == mysql.TypeEnum) {
-				return nil, nil, nil
+				return nil, nil, nil, nil
 			}
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		cmp, err := outerValue.CompareDatum(sc, &innerValue)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if cmp != 0 {
 			// If the converted outerValue is not equal to the origin outerValue, we don't need to lookup it.
-			return nil, nil, nil
+			return nil, nil, nil, nil
 		}
 		if i < keyLen {
 			dLookupKey = append(dLookupKey, innerValue)
+			outerKeys = append(outerKeys, outerValue)
 		}
 		dHashKey = append(dHashKey, innerValue)
 	}
-	return dLookupKey, dHashKey, nil
+	return dLookupKey, dHashKey, outerKeys, nil
 }
 
 func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*indexJoinLookUpContent) []*indexJoinLookUpContent {

@@ -16,6 +16,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -2876,6 +2877,21 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 	}
 
 	if cwc == nil {
+		totalInnerKeysString := make([]string, 0)
+		for _, content := range lookUpContents {
+			innerKeys := make([]string, 0)
+			for _, key := range content.keys {
+				innerKeys = append(innerKeys, key.GetString())
+			}
+			totalInnerKeysString = append(totalInnerKeysString, fmt.Sprintf("%v", innerKeys))
+		}
+		var totalRanges []string
+		for _, ran := range kvRanges {
+			totalRanges = append(totalRanges, fmt.Sprintf("[%s,%s)", ran.StartKey, ran.EndKey))
+		}
+		logutil.BgLogger().Warn("inner keys for IndexJoin",
+			zap.String("literal key ranges", fmt.Sprintf("%v", totalInnerKeysString)),
+			zap.String("binary key ranges", fmt.Sprintf("%v", totalRanges)))
 		sort.Slice(kvRanges, func(i, j int) bool {
 			return bytes.Compare(kvRanges[i].StartKey, kvRanges[j].StartKey) < 0
 		})
