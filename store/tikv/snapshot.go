@@ -190,17 +190,6 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 	}
 	s.mu.Unlock()
 
-	batchGetKeys := make([]string, 0, len(keys))
-	batchGetValues := make([]string, 0, len(keys))
-
-	for _, k := range keys {
-		batchGetKeys = append(batchGetKeys, k.String())
-		batchGetValues = append(batchGetValues, fmt.Sprintf("%v", m[string(k)]))
-	}
-	logutil.Logger(ctx).Info("DBG snapshot batch get",
-		zap.Strings("keys", batchGetKeys),
-		zap.Strings("values", batchGetValues))
-
 	return m, nil
 }
 
@@ -371,10 +360,6 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	logutil.Logger(ctx).Info("DBG snapshot get",
-		zap.Stringer("key", k),
-		zap.String("value", fmt.Sprintf("%v", val)))
 
 	if len(val) == 0 {
 		return nil, kv.ErrNotExist

@@ -703,6 +703,8 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 	for {
 		startTime := time.Now()
 		handles, retChunk, scannedKeys, err := w.extractTaskHandles(ctx, chk, result, count)
+		logutil.Logger(ctx).Info("DBG index worker",
+			zap.Int64s("handles", handles))
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- err
