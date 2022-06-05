@@ -212,7 +212,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			batchGetKeys = append(batchGetKeys, k.String())
 			batchGetHandles = append(batchGetHandles, fmt.Sprintf("%v", handleVals[string(k)]))
 		}
-		logutil.Logger(ctx).Error("DBG batch point get, keys and handles",
+		logutil.Logger(ctx).Info("DBG batch point get, keys and handles",
 			zap.Strings("keys", batchGetKeys),
 			zap.Strings("handles", batchGetHandles))
 

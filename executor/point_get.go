@@ -187,7 +187,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 		}
 
-		logutil.Logger(ctx).Error("DBG point get, keys and handles",
+		logutil.Logger(ctx).Info("DBG point get, keys and handles",
 			zap.Stringer("key", e.idxKey),
 			zap.String("handle", fmt.Sprintf("%v", e.handleVal)))
 

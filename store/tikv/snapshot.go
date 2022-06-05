@@ -197,7 +197,7 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 		batchGetKeys = append(batchGetKeys, k.String())
 		batchGetValues = append(batchGetValues, fmt.Sprintf("%v", m[string(k)]))
 	}
-	logutil.Logger(ctx).Error("DBG snapshot batch get",
+	logutil.Logger(ctx).Info("DBG snapshot batch get",
 		zap.Strings("keys", batchGetKeys),
 		zap.Strings("values", batchGetValues))
 
@@ -372,7 +372,7 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	logutil.Logger(ctx).Error("DBG snapshot get",
+	logutil.Logger(ctx).Info("DBG snapshot get",
 		zap.Stringer("key", k),
 		zap.String("value", fmt.Sprintf("%v", val)))
 
