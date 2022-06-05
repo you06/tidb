@@ -187,9 +187,11 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 		}
 
-		logutil.Logger(ctx).Info("DBG point get, keys and handles",
-			zap.Stringer("key", e.idxKey),
-			zap.String("handle", fmt.Sprintf("%v", e.handleVal)))
+		if e.ctx.GetSessionVars().ConnectionID > 0 {
+			logutil.Logger(ctx).Info("DBG point get, keys and handles",
+				zap.Stringer("key", e.idxKey),
+				zap.String("handle", fmt.Sprintf("%v", e.handleVal)))
+		}
 
 		if len(e.handleVal) == 0 {
 			// handle is not found, try lock the index key if isolation level is not read consistency

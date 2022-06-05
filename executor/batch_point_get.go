@@ -212,9 +212,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			batchGetKeys = append(batchGetKeys, k.String())
 			batchGetHandles = append(batchGetHandles, fmt.Sprintf("%v", handleVals[string(k)]))
 		}
-		logutil.Logger(ctx).Info("DBG batch point get, keys and handles",
-			zap.Strings("keys", batchGetKeys),
-			zap.Strings("handles", batchGetHandles))
+		if e.ctx.GetSessionVars().ConnectionID > 0 {
+			logutil.Logger(ctx).Info("DBG batch point get, keys and handles",
+				zap.Strings("keys", batchGetKeys),
+				zap.Strings("handles", batchGetHandles))
+		}
 
 		e.handles = make([]int64, 0, len(keys))
 		if e.tblInfo.Partition != nil {
