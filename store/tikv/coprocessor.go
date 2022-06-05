@@ -60,6 +60,12 @@ type CopClient struct {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) kv.Response {
+	kvRanges := make([]string, 0, len(req.KeyRanges))
+	for _, kvRange := range req.KeyRanges {
+		kvRanges = append(kvRanges, fmt.Sprintf("[%s, %s), point: %t", kvRange.StartKey, kvRange.EndKey, kvRange.IsPoint()))
+	}
+	logutil.Logger(ctx).Error("DBG before Send coprocessor request", zap.Strings("KV ranges", kvRanges))
+
 	if req.StoreType == kv.TiFlash && req.BatchCop {
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars)

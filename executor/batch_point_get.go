@@ -15,6 +15,9 @@ package executor
 
 import (
 	"context"
+	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"sort"
 
 	"github.com/pingcap/failpoint"
@@ -196,11 +199,22 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 		indexKeys = keys
 
+		batchGetKeys := make([]string, 0, len(keys))
+		batchGetHandles := make([]string, 0, len(keys))
+
 		// Fetch all handles.
 		handleVals, err = batchGetter.BatchGet(ctx, keys)
 		if err != nil {
 			return err
 		}
+
+		for _, k := range keys {
+			batchGetKeys = append(batchGetKeys, k.String())
+			batchGetHandles = append(batchGetHandles, fmt.Sprintf("%v", handleVals[string(k)]))
+		}
+		logutil.Logger(ctx).Error("DBG batch point get, keys and handles",
+			zap.Strings("keys", batchGetKeys),
+			zap.Strings("handles", batchGetHandles))
 
 		e.handles = make([]int64, 0, len(keys))
 		if e.tblInfo.Partition != nil {
