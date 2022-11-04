@@ -770,6 +770,9 @@ const (
 
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
+
+	// TiDBRecordTransactionStmtDuration indicates whether record the diagnosis info for contention transaction.
+	TiDBRecordTransactionStmtDuration = "tidb_record_txn_stmt_duration"
 )
 
 // TiDB vars that have only global scope

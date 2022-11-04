@@ -311,6 +311,14 @@ var (
 			Name:      "rc_check_ts_conflict_total",
 			Help:      "Counter of WriteConflict caused by RCCheckTS.",
 		}, []string{LblType})
+
+	TransactionStatementsSummary = prometheus.NewSummaryVec(
+		prometheus.SummaryOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "txn_stmt_duration",
+			Help:      "stmt duration",
+		}, []string{LblType})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.
