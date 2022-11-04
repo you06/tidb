@@ -1998,6 +1998,19 @@ var defaultSysVars = []*SysVar{
 			s.EnableReuseCheck = TiDBOptOn(val)
 			return nil
 		}},
+	{Scope: ScopeSession, Name: TiDBRecordTransactionStmtDuration, Value: "", Type: TypeStr,
+		SetSession: func(s *SessionVars, val string) error {
+			if val == "" {
+				s.RecordTxnStmtDuration.Name = val
+				return nil
+			}
+			if s.RecordTxnStmtDuration.Name != "" {
+				return errors.Errorf("`%s` is already set on with name '%s'",
+					TiDBRecordTransactionStmtDuration, s.RecordTxnStmtDuration.Name)
+			}
+			s.RecordTxnStmtDuration.Name = val
+			return nil
+		}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

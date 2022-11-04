@@ -1305,6 +1305,13 @@ type SessionVars struct {
 	// preuseChunkAlloc indicates whether pre statement use chunk alloc
 	// like select @@last_sql_use_alloc
 	preUseChunkAlloc bool
+
+	// RecordTxnStmtDuration indicates whether record the diagnosis info for contention transaction
+	RecordTxnStmtDuration struct {
+		Name      string
+		Durations []time.Duration
+		Tps       []string
+	}
 }
 
 // GetNewChunk Attempt to request memory from the chunk pool

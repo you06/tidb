@@ -1232,6 +1232,11 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	sessionVar := cc.ctx.GetSessionVars()
 	affectedRows := cc.ctx.AffectedRows()
 	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, affectedRows, sessionVar.InTxn())
+	if sessionVar.RecordTxnStmtDuration.Name != "" &&
+		sqlType != "Commit" {
+		sessionVar.RecordTxnStmtDuration.Durations = append(sessionVar.RecordTxnStmtDuration.Durations, cost)
+		sessionVar.RecordTxnStmtDuration.Tps = append(sessionVar.RecordTxnStmtDuration.Tps, sqlType)
+	}
 
 	switch sqlType {
 	case "Use":
