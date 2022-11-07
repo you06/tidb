@@ -1407,17 +1407,19 @@ func (b *builtinJSONStorageFreeSig) Clone() builtinFunc {
 }
 
 func (c *jsonStorageFreeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, err
-	}
+	//if err := c.verifyArgs(args); err != nil {
+	//	return nil, err
+	//}
+	//
+	//bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//sig := &builtinJSONStorageFreeSig{bf}
+	//sig.setPbCode(tipb.ScalarFuncSig_JsonStorageFreeSig)
+	//return sig, nil
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson)
-	if err != nil {
-		return nil, err
-	}
-	sig := &builtinJSONStorageFreeSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_JsonStorageFreeSig)
-	return sig, nil
+	panic("unimplemented")
 }
 
 func (b *builtinJSONStorageFreeSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
