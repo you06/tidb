@@ -103,7 +103,6 @@ import (
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
-	"github.com/prometheus/client_golang/prometheus"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -3379,7 +3378,6 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 			transactionDurationOptimisticCommit.Observe(duration)
 		}
 	}
-	s.recordTxnStmtDuration(err, duration)
 }
 
 func (s *session) checkPlacementPolicyBeforeCommit() error {
@@ -3724,51 +3722,4 @@ func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]str
 		}
 		return true
 	})
-}
-
-var txnStmtCache sync.Map
-
-func (s *session) recordTxnStmtDuration(err error, commitDuration float64) {
-	recordResult := s.sessionVars.RecordTxnStmtDuration
-	// reuse exist object if it's not touched.
-	if recordResult.Name == "" {
-		return
-	}
-	defer func() {
-		s.sessionVars.RecordTxnStmtDuration = struct {
-			Name      string
-			Durations []time.Duration
-			Tps       []string
-		}{
-			Name:      "",
-			Durations: make([]time.Duration, 0, len(recordResult.Durations)),
-			Tps:       make([]string, 0, len(recordResult.Tps)),
-		}
-	}()
-	recordStmt := func(k string, secs float64) {
-		metric, ok := txnStmtCache.Load(k)
-		if !ok {
-			metric = metrics.TransactionStatementsSummary.WithLabelValues(k)
-			txnStmtCache.Store(k, metric)
-		}
-		metric.(prometheus.Observer).Observe(secs)
-	}
-	// clean up the name in optimistic transaction
-	if !s.sessionVars.TxnCtx.IsPessimistic {
-		return
-	}
-	if len(recordResult.Tps) != len(recordResult.Durations) {
-		logutil.BgLogger().Info("length of duration and types not equal, something wrong",
-			zap.Int("len(durations)", len(recordResult.Durations)), zap.Int("len(tps)", len(recordResult.Tps)))
-		recordResult.Durations, recordResult.Tps = nil, nil
-		return
-	}
-	for i, tp := range recordResult.Tps {
-		key := fmt.Sprintf("%s-%d-%s", recordResult.Name, i, tp)
-		recordStmt(key, recordResult.Durations[i].Seconds())
-	}
-	if err == nil {
-		key := fmt.Sprintf("%s-%d-%s", recordResult.Name, len(recordResult.Tps), "Commit")
-		recordStmt(key, commitDuration)
-	}
 }

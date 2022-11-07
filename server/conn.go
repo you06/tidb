@@ -1232,10 +1232,12 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	sessionVar := cc.ctx.GetSessionVars()
 	affectedRows := cc.ctx.AffectedRows()
 	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, affectedRows, sessionVar.InTxn())
-	if sessionVar.RecordTxnStmtDuration.Name != "" &&
-		sqlType != "Commit" {
+	if sessionVar.RecordTxnStmtDuration.Name != "" {
 		sessionVar.RecordTxnStmtDuration.Durations = append(sessionVar.RecordTxnStmtDuration.Durations, cost)
 		sessionVar.RecordTxnStmtDuration.Tps = append(sessionVar.RecordTxnStmtDuration.Tps, sqlType)
+		if sqlType == "Commit" {
+			recordTxnStmtDuration(sessionVar)
+		}
 	}
 
 	switch sqlType {
@@ -2631,5 +2633,46 @@ func (cc getLastStmtInConn) PProfLabel() string {
 		return tidbutil.QueryStrForLog(cc.preparedStmt2StringNoArgs(stmtID))
 	default:
 		return ""
+	}
+}
+
+var txnStmtCache sync.Map
+
+func recordTxnStmtDuration(sessionVars *variable.SessionVars) {
+	recordResult := sessionVars.RecordTxnStmtDuration
+	// reuse exist object if it's not touched.
+	if recordResult.Name == "" {
+		return
+	}
+	defer func() {
+		sessionVars.RecordTxnStmtDuration = struct {
+			Name      string
+			Durations []time.Duration
+			Tps       []string
+		}{
+			Name:      "",
+			Durations: make([]time.Duration, 0, len(recordResult.Durations)),
+			Tps:       make([]string, 0, len(recordResult.Tps)),
+		}
+		sessionVars.SetSystemVar(variable.TiDBRecordTransactionStmtDuration, "")
+	}()
+	// clean up the name in optimistic transaction
+	if !sessionVars.TxnCtx.IsPessimistic {
+		return
+	}
+	if len(recordResult.Tps) != len(recordResult.Durations) {
+		logutil.BgLogger().Info("length of duration and types not equal, something wrong",
+			zap.Int("len(durations)", len(recordResult.Durations)), zap.Int("len(tps)", len(recordResult.Tps)))
+		recordResult.Durations, recordResult.Tps = nil, nil
+		return
+	}
+	for i, tp := range recordResult.Tps {
+		key := fmt.Sprintf("%s-%d-%s", recordResult.Name, i, tp)
+		metric, ok := txnStmtCache.Load(key)
+		if !ok {
+			metric = metrics.TransactionStatementsSummary.WithLabelValues(key)
+			txnStmtCache.Store(key, metric)
+		}
+		metric.(prometheus.Observer).Observe(recordResult.Durations[i].Seconds())
 	}
 }
