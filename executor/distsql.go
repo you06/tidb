@@ -365,10 +365,13 @@ type IndexLookUpExecutor struct {
 
 	// All fields above are immutable.
 
-	idxWorkerWg sync.WaitGroup
-	tblWorkerWg sync.WaitGroup
-	finished    chan struct{}
+	idxWorkerWg           sync.WaitGroup
+	tblWorkerCount        uint64
+	workingTblWorkerCount int64
+	tblWorkerWg           sync.WaitGroup
+	finished              chan struct{}
 
+	workCh     chan *lookupTableTask
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
 	feedback   *statistics.QueryFeedback
@@ -529,11 +532,11 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	// so fetching index and getting table data can run concurrently.
 	ctx, cancel := context.WithCancel(ctx)
 	e.cancelFunc = cancel
-	workCh := make(chan *lookupTableTask, 1)
-	if err := e.startIndexWorker(ctx, workCh, initBatchSize); err != nil {
+	e.workCh = make(chan *lookupTableTask, 1)
+	e.mayStartOneTableWorker(ctx)
+	if err := e.startIndexWorker(ctx, e.workCh, initBatchSize); err != nil {
 		return err
 	}
-	e.startTableWorker(ctx, workCh)
 	e.workerStarted = true
 	return nil
 }
@@ -643,7 +646,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 
 			// fetch data from this partition
 			ctx1, cancel := context.WithCancel(ctx)
-			fetchErr := worker.fetchHandles(ctx1, result)
+			fetchErr := worker.fetchHandles(ctx, ctx1, result)
 			if fetchErr != nil { // this error is synced in fetchHandles(), don't sync it again
 				e.feedback.Invalidate()
 			}
@@ -663,30 +666,45 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	return nil
 }
 
-// startTableWorker launchs some background goroutines which pick tasks from workCh and execute the task.
-func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-chan *lookupTableTask) {
-	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency()
-	e.tblWorkerWg.Add(lookupConcurrencyLimit)
-	for i := 0; i < lookupConcurrencyLimit; i++ {
-		workerID := i
-		worker := &tableWorker{
-			idxLookup:       e,
-			workCh:          workCh,
-			finished:        e.finished,
-			keepOrder:       e.keepOrder,
-			handleIdx:       e.handleIdx,
-			checkIndexValue: e.checkIndexValue,
-			memTracker:      memory.NewTracker(workerID, -1),
-		}
-		worker.memTracker.AttachTo(e.memTracker)
-		ctx1, cancel := context.WithCancel(ctx)
-		go func() {
-			defer trace.StartRegion(ctx1, "IndexLookUpTableWorker").End()
-			worker.pickAndExecTask(ctx1)
-			cancel()
-			e.tblWorkerWg.Done()
-		}()
+// mayStartOneTableWorker spawns one table worker if the current count of workers is less than execute concurrency.
+// This function is only called in startTableWorker and index worker,
+// so the worker is spawned before Close index worker and table worker.
+func (e *IndexLookUpExecutor) mayStartOneTableWorker(ctx context.Context) {
+	// if there is sufficient worker, do not spawn more.
+	chLen := int64(len(e.workCh))
+	workingTblWorkerCount := atomic.LoadInt64(&e.workingTblWorkerCount)
+	if chLen+workingTblWorkerCount < int64(atomic.LoadUint64(&e.tblWorkerCount)) {
+		return
 	}
+	lookupConcurrencyLimit := uint64(e.ctx.GetSessionVars().IndexLookupConcurrency())
+	var workerID uint64
+	for {
+		workerID = atomic.LoadUint64(&e.tblWorkerCount)
+		if workerID >= lookupConcurrencyLimit {
+			return
+		}
+		if atomic.CompareAndSwapUint64(&e.tblWorkerCount, workerID, workerID+1) {
+			break
+		}
+	}
+	e.tblWorkerWg.Add(1)
+	worker := &tableWorker{
+		idxLookup:       e,
+		workCh:          e.workCh,
+		finished:        e.finished,
+		keepOrder:       e.keepOrder,
+		handleIdx:       e.handleIdx,
+		checkIndexValue: e.checkIndexValue,
+		memTracker:      memory.NewTracker(int(workerID), -1),
+	}
+	worker.memTracker.AttachTo(e.memTracker)
+	ctx1, cancel := context.WithCancel(ctx)
+	go func() {
+		defer trace.StartRegion(ctx1, "IndexLookUpTableWorker").End()
+		worker.pickAndExecTask(ctx1)
+		cancel()
+		e.tblWorkerWg.Done()
+	}()
 }
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookupTableTask) (Executor, error) {
@@ -742,6 +760,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.workerStarted = false
 	e.memTracker = nil
 	e.resultCurr = nil
+	e.tblWorkerCount = 0
 	return nil
 }
 
@@ -855,7 +874,7 @@ func (w *indexWorker) syncErr(err error) {
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are sent to workCh to be further processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
-func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult) (err error) {
+func (w *indexWorker) fetchHandles(outerCtx, ctx context.Context, result distsql.SelectResult) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.Logger(ctx).Error("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -887,6 +906,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		}
 		task := w.buildTableTask(handles, retChunk, extraChunks)
 		finishBuild := time.Now()
+		w.idxLookup.mayStartOneTableWorker(outerCtx)
 		select {
 		case <-ctx.Done():
 			return nil
@@ -1049,12 +1069,14 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 		case <-w.finished:
 			return
 		}
+		atomic.AddInt64(&w.idxLookup.workingTblWorkerCount, 1)
 		startTime := time.Now()
 		err := w.executeTask(ctx, task)
 		if w.idxLookup.stats != nil {
 			atomic.AddInt64(&w.idxLookup.stats.TableRowScan, int64(time.Since(startTime)))
 			atomic.AddInt64(&w.idxLookup.stats.TableTaskNum, 1)
 		}
+		atomic.AddInt64(&w.idxLookup.workingTblWorkerCount, -1)
 		task.doneCh <- err
 	}
 }
