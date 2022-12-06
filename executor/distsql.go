@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/workers"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -371,9 +372,9 @@ type IndexLookUpExecutor struct {
 
 	// All fields above are immutable.
 
-	idxWorkerWg sync.WaitGroup
-	tblWorkerWg sync.WaitGroup
-	finished    chan struct{}
+	idxWorkerWg      sync.WaitGroup
+	tblWorkerManager *workers.WorkerManager[*lookupTableTask, *tableWorker]
+	finished         chan struct{}
 
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
@@ -534,11 +535,10 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	// so fetching index and getting table data can run concurrently.
 	ctx, cancel := context.WithCancel(ctx)
 	e.cancelFunc = cancel
-	workCh := make(chan *lookupTableTask, 1)
-	if err := e.startIndexWorker(ctx, workCh, initBatchSize); err != nil {
+	e.startTableWorker(ctx)
+	if err := e.startIndexWorker(ctx, initBatchSize); err != nil {
 		return err
 	}
-	e.startTableWorker(ctx, workCh)
 	e.workerStarted = true
 	return nil
 }
@@ -566,7 +566,7 @@ func (e *IndexLookUpExecutor) getRetTpsByHandle() []*types.FieldType {
 }
 
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
-func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<- *lookupTableTask, initBatchSize int) error {
+func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSize int) error {
 	if e.runtimeStats != nil {
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec
@@ -585,7 +585,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
 		worker := &indexWorker{
 			idxLookup:       e,
-			workCh:          workCh,
 			finished:        e.finished,
 			resultCh:        e.resultCh,
 			keepOrder:       e.keepOrder,
@@ -661,7 +660,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				break // if any error occurs, exit after releasing all resources
 			}
 		}
-		close(workCh)
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
 	}()
@@ -669,29 +667,23 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 }
 
 // startTableWorker launchs some background goroutines which pick tasks from workCh and execute the task.
-func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-chan *lookupTableTask) {
+func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context) {
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency()
-	e.tblWorkerWg.Add(lookupConcurrencyLimit)
-	for i := 0; i < lookupConcurrencyLimit; i++ {
-		workerID := i
+
+	workerID := uint64(0)
+	e.tblWorkerManager = workers.New(ctx, 1, int32(lookupConcurrencyLimit), func() *tableWorker {
+		id := atomic.AddUint64(&workerID, 1)
 		worker := &tableWorker{
 			idxLookup:       e,
-			workCh:          workCh,
 			finished:        e.finished,
 			keepOrder:       e.keepOrder,
 			handleIdx:       e.handleIdx,
 			checkIndexValue: e.checkIndexValue,
-			memTracker:      memory.NewTracker(workerID, -1),
+			memTracker:      memory.NewTracker(int(id), -1),
 		}
 		worker.memTracker.AttachTo(e.memTracker)
-		ctx1, cancel := context.WithCancel(ctx)
-		go func() {
-			defer trace.StartRegion(ctx1, "IndexLookUpTableWorker").End()
-			worker.pickAndExecTask(ctx1)
-			cancel()
-			e.tblWorkerWg.Done()
-		}()
-	}
+		return worker
+	}, (**lookupTableTask)(nil))
 }
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookupTableTask) (Executor, error) {
@@ -745,7 +737,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	// consume the data, background worker still writing to resultCh and block forever.
 	channel.Clear(e.resultCh)
 	e.idxWorkerWg.Wait()
-	e.tblWorkerWg.Wait()
+	e.tblWorkerManager.Close(false)
 	e.finished = nil
 	e.workerStarted = false
 	e.memTracker = nil
@@ -894,14 +886,12 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		}
 		task := w.buildTableTask(handles, retChunk)
 		finishBuild := time.Now()
-		select {
-		case <-ctx.Done():
+		if w.idxLookup.tblWorkerManager.Send(task) {
 			return nil
-		case <-w.finished:
-			return nil
-		case w.workCh <- task:
+		} else {
 			w.resultCh <- task
 		}
+
 		if w.idxLookup.stats != nil {
 			atomic.AddInt64(&w.idxLookup.stats.FetchHandle, int64(finishFetch.Sub(startTime)))
 			atomic.AddInt64(&w.idxLookup.stats.TaskWait, int64(time.Since(finishBuild)))
@@ -1303,6 +1293,19 @@ func getDatumRow(r *chunk.Row, fields []*types.FieldType) []types.Datum {
 	}
 	return datumRow
 }
+
+func (w *tableWorker) HandleTask(ctx context.Context, task *lookupTableTask) error {
+	startTime := time.Now()
+	err := w.executeTask(ctx, task)
+	if w.idxLookup.stats != nil {
+		atomic.AddInt64(&w.idxLookup.stats.TableRowScan, int64(time.Since(startTime)))
+		atomic.AddInt64(&w.idxLookup.stats.TableTaskNum, 1)
+	}
+	task.doneCh <- err
+	return nil
+}
+
+func (w *tableWorker) Close() {}
 
 // executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
 // Then we hold the returning rows and finish this task.
