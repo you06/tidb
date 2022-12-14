@@ -8,11 +8,11 @@ import (
 )
 
 type DummyIntWorker struct {
-	receives []int
+	receive chan int
 }
 
 func (d *DummyIntWorker) HandleTask(_ context.Context, task int) error {
-	d.receives = append(d.receives, task)
+	d.receive <- task
 	return nil
 }
 
@@ -20,22 +20,24 @@ func (d *DummyIntWorker) Close() {}
 
 func NewDummyIntWorker() *DummyIntWorker {
 	return &DummyIntWorker{
-		receives: make([]int, 0),
+		receive: make(chan int, 3),
 	}
 }
 
 func TestPool(t *testing.T) {
 	pool := New(context.Background(), 0, 1, NewDummyIntWorker, (*int)(nil))
 	pool.Send(1)
+	require.Equal(t, 1, <-pool.workers[0].receive)
 	pool.Close(true)
-	require.Equal(t, []int{1}, pool.workers[0].receives)
 
 	pool = New(context.Background(), 0, 1, NewDummyIntWorker, (*int)(nil))
 	pool.Send(1)
 	pool.Send(2)
 	pool.Send(3)
 	pool.Close(true)
-	require.Equal(t, []int{1, 2, 3}, pool.workers[0].receives)
+	require.Equal(t, 1, <-pool.workers[0].receive)
+	require.Equal(t, 2, <-pool.workers[0].receive)
+	require.Equal(t, 3, <-pool.workers[0].receive)
 }
 
 func TestBenchProjection(t *testing.T) {

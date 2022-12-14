@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/workers"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
@@ -58,9 +59,10 @@ var _ Executor = &IndexLookUpJoin{}
 type IndexLookUpJoin struct {
 	baseExecutor
 
-	resultCh   <-chan *lookUpJoinTask
-	cancelFunc context.CancelFunc
-	workerWg   *sync.WaitGroup
+	resultCh           <-chan *lookUpJoinTask
+	cancelFunc         context.CancelFunc
+	workerWg           *sync.WaitGroup
+	innerWorkerManager *workers.WorkerManager[*lookUpJoinTask, *innerWorker]
 
 	outerCtx outerCtx
 	innerCtx innerCtx
@@ -141,6 +143,8 @@ type outerWorker struct {
 	innerCh  chan<- *lookUpJoinTask
 
 	parentMemTracker *memory.Tracker
+
+	innerWorkerManager *workers.WorkerManager[*lookUpJoinTask, *innerWorker]
 }
 
 type innerWorker struct {
@@ -185,31 +189,29 @@ func (e *IndexLookUpJoin) startWorkers(ctx context.Context) {
 	e.resultCh = resultCh
 	workerCtx, cancelFunc := context.WithCancel(ctx)
 	e.cancelFunc = cancelFunc
-	innerCh := make(chan *lookUpJoinTask, concurrency)
 	e.workerWg.Add(1)
-	go e.newOuterWorker(resultCh, innerCh).run(workerCtx, e.workerWg)
-	e.workerWg.Add(concurrency)
-	for i := 0; i < concurrency; i++ {
-		go e.newInnerWorker(innerCh).run(workerCtx, e.workerWg)
-	}
+	e.innerWorkerManager = workers.New(workerCtx, 1, int32(concurrency), func() *innerWorker {
+		return e.newInnerWorker()
+	}, (**lookUpJoinTask)(nil))
+	go e.newOuterWorker(resultCh).run(workerCtx, e.workerWg)
 }
 
-func (e *IndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask) *outerWorker {
+func (e *IndexLookUpJoin) newOuterWorker(resultCh chan *lookUpJoinTask) *outerWorker {
 	ow := &outerWorker{
-		outerCtx:         e.outerCtx,
-		ctx:              e.ctx,
-		executor:         e.children[0],
-		resultCh:         resultCh,
-		innerCh:          innerCh,
-		batchSize:        32,
-		maxBatchSize:     e.ctx.GetSessionVars().IndexJoinBatchSize,
-		parentMemTracker: e.memTracker,
-		lookup:           e,
+		outerCtx:           e.outerCtx,
+		ctx:                e.ctx,
+		executor:           e.children[0],
+		resultCh:           resultCh,
+		batchSize:          32,
+		maxBatchSize:       e.ctx.GetSessionVars().IndexJoinBatchSize,
+		parentMemTracker:   e.memTracker,
+		lookup:             e,
+		innerWorkerManager: e.innerWorkerManager,
 	}
 	return ow
 }
 
-func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWorker {
+func (e *IndexLookUpJoin) newInnerWorker() *innerWorker {
 	// Since multiple inner workers run concurrently, we should copy join's indexRanges for every worker to avoid data race.
 	copiedRanges := make([]*ranger.Range, 0, len(e.indexRanges.Range()))
 	for _, ran := range e.indexRanges.Range() {
@@ -223,7 +225,6 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 	iw := &innerWorker{
 		innerCtx:      e.innerCtx,
 		outerCtx:      e.outerCtx,
-		taskCh:        taskCh,
 		ctx:           e.ctx,
 		executorChk:   e.ctx.GetSessionVars().GetNewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize, e.maxChunkSize, e.AllocPool),
 		indexRanges:   copiedRanges,
@@ -369,7 +370,6 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			ow.pushToChan(ctx, task, ow.resultCh)
 		}
 		close(ow.resultCh)
-		close(ow.innerCh)
 		wg.Done()
 	}()
 	for {
@@ -385,7 +385,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			return
 		}
 
-		if finished := ow.pushToChan(ctx, task, ow.innerCh); finished {
+		if finished := ow.innerWorkerManager.Send(task); finished {
 			return
 		}
 
@@ -474,6 +474,27 @@ func (ow *outerWorker) increaseBatchSize() {
 		ow.batchSize = ow.maxBatchSize
 	}
 }
+
+func (iw *innerWorker) HandleTask(ctx context.Context, task *lookUpJoinTask) error {
+	defer func() {
+		if r := recover(); r != nil {
+			iw.lookup.finished.Store(true)
+			logutil.Logger(ctx).Error("innerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			err := errors.Errorf("%v", r)
+			// "task != nil" is guaranteed when panic happened.
+			task.doneCh <- err
+		}
+	}()
+
+	err := iw.handleTask(ctx, task)
+	select {
+	case <-ctx.Done():
+	case task.doneCh <- err:
+	}
+	return nil
+}
+
+func (iw *innerWorker) Close() {}
 
 func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer trace.StartRegion(ctx, "IndexLookupJoinInnerWorker").End()
@@ -771,6 +792,8 @@ func (e *IndexLookUpJoin) Close() error {
 		e.cancelFunc()
 	}
 	e.workerWg.Wait()
+	e.innerWorkerManager.Close(true)
+	e.innerWorkerManager = nil
 	e.memTracker = nil
 	e.task = nil
 	e.finished.Store(false)
