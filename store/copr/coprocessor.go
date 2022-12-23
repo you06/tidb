@@ -292,8 +292,8 @@ func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
 	return pbTasks
 }
 
-// rangesPerTask limits the length of the ranges slice sent in one copTask.
-const rangesPerTask = 25000
+// RangesPerTask limits the length of the ranges slice sent in one copTask.
+const RangesPerTask = 25000
 
 type buildCopTaskOpt struct {
 	req      *kv.Request
@@ -316,7 +316,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 		hints = nil
 	}
 
-	rangesPerTaskLimit := rangesPerTask
+	rangesPerTaskLimit := RangesPerTask
 	failpoint.Inject("setRangesPerTask", func(val failpoint.Value) {
 		if v, ok := val.(int); ok {
 			rangesPerTaskLimit = v
@@ -339,7 +339,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 
 	var builder taskBuilder
 	if req.StoreBatchSize > 0 {
-		builder = newBatchTaskBuilder(bo, req, cache)
+		builder = newBatchTaskBuilder(bo, req, cache, rangesPerTaskLimit)
 	} else {
 		builder = newLegacyTaskBuilder(len(locs))
 	}
@@ -453,24 +453,32 @@ func (b *legacyTaskBuilder) build() []*copTask {
 }
 
 type batchStoreTaskBuilder struct {
-	bo        *Backoffer
-	req       *kv.Request
-	cache     *RegionCache
-	taskID    uint64
-	limit     int
-	store2Idx map[uint64]int
-	tasks     []*copTask
+	bo          *Backoffer
+	req         *kv.Request
+	cache       *RegionCache
+	taskID      uint64
+	limit       int
+	rangesLimit int
+	store2batch map[uint64]struct {
+		idx    int
+		ranges int
+	}
+	tasks []*copTask
 }
 
-func newBatchTaskBuilder(bo *Backoffer, req *kv.Request, cache *RegionCache) *batchStoreTaskBuilder {
+func newBatchTaskBuilder(bo *Backoffer, req *kv.Request, cache *RegionCache, rangesLimit int) *batchStoreTaskBuilder {
 	return &batchStoreTaskBuilder{
-		bo:        bo,
-		req:       req,
-		cache:     cache,
-		taskID:    0,
-		limit:     req.StoreBatchSize,
-		store2Idx: make(map[uint64]int, 16),
-		tasks:     make([]*copTask, 0, 16),
+		bo:          bo,
+		req:         req,
+		cache:       cache,
+		taskID:      0,
+		limit:       req.StoreBatchSize,
+		rangesLimit: rangesLimit,
+		store2batch: make(map[uint64]struct {
+			idx    int
+			ranges int
+		}, 16),
+		tasks: make([]*copTask, 0, 16),
 	}
 }
 
@@ -494,20 +502,31 @@ func (b *batchStoreTaskBuilder) handle(task *copTask) (err error) {
 	if batchedTask == nil {
 		return nil
 	}
-	if idx, ok := b.store2Idx[batchedTask.storeID]; !ok || len(b.tasks[idx].batchTaskList) >= b.limit {
+	rangeLen := task.ranges.Len()
+	if batch, ok := b.store2batch[batchedTask.storeID]; !ok ||
+		len(b.tasks[batch.idx].batchTaskList) >= b.limit ||
+		b.tasks[batch.idx].RowCountHint+task.RowCountHint > b.rangesLimit /* row hint is more accurate */ ||
+		batch.ranges+rangeLen > b.rangesLimit {
 		b.tasks = append(b.tasks, batchedTask.task)
-		b.store2Idx[batchedTask.storeID] = len(b.tasks) - 1
+		b.store2batch[batchedTask.storeID] = struct {
+			idx    int
+			ranges int
+		}{
+			idx:    len(b.tasks) - 1,
+			ranges: rangeLen,
+		}
 	} else {
-		if b.tasks[idx].batchTaskList == nil {
-			b.tasks[idx].batchTaskList = make(map[uint64]*batchedCopTask, b.limit)
+		if b.tasks[batch.idx].batchTaskList == nil {
+			b.tasks[batch.idx].batchTaskList = make(map[uint64]*batchedCopTask, b.limit)
 			// disable paging for batched task.
-			b.tasks[idx].paging = false
-			b.tasks[idx].pagingSize = 0
+			b.tasks[batch.idx].paging = false
+			b.tasks[batch.idx].pagingSize = 0
 		}
 		if task.RowCountHint > 0 {
-			b.tasks[idx].RowCountHint += task.RowCountHint
+			b.tasks[batch.idx].RowCountHint += task.RowCountHint
 		}
-		b.tasks[idx].batchTaskList[task.taskID] = batchedTask
+		batch.ranges += rangeLen
+		b.tasks[batch.idx].batchTaskList[task.taskID] = batchedTask
 	}
 	handled = true
 	return nil
