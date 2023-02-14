@@ -1133,6 +1133,8 @@ const (
 	// Any idle transaction will be killed after being idle for `tidb_idle_transaction_timeout` seconds.
 	// This is similar to https://docs.percona.com/percona-server/5.7/management/innodb_kill_idle_trx.html and https://mariadb.com/kb/en/transaction-timeouts/
 	TiDBIdleTransactionTimeout = "tidb_idle_transaction_timeout"
+	// TiDBDistSQLParallelBuild indicates whether enable parallel building distsql.
+	TiDBDistSQLParallelBuild = "tidb_distsql_parallel_build"
 )
 
 // TiDB intentional limits
@@ -1452,6 +1454,7 @@ const (
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0
 	DefTiDBTxnEntrySizeLimit                          = 0
+	DefTiDBDistSQLParallelBuild                       = false
 )
 
 // Process global variables.

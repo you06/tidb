@@ -2980,6 +2980,10 @@ var defaultSysVars = []*SysVar{
 			s.IdleTransactionTimeout = tidbOptPositiveInt32(val, DefTiDBIdleTransactionTimeout)
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBDistSQLParallelBuild, Value: BoolToOnOff(DefTiDBDistSQLParallelBuild), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.DistSQLParallelBuild = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {
