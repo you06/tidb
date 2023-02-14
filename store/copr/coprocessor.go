@@ -306,7 +306,7 @@ type buildCopTaskOpt struct {
 	req      *kv.Request
 	cache    *RegionCache
 	eventCb  trxevents.EventCallback
-	respChan bool
+	respChan bool // respChan is true when build first time in keep-order req.
 	rowHints []int
 	elapsed  *time.Duration
 }
@@ -613,6 +613,18 @@ func smallTaskConcurrency(tasks []*copTask, numcpu int) (int, int) {
 		extraConc = smallTaskConcurrencyLimit
 	}
 	return res, extraConc
+}
+
+type copTaskAsyncBuilder struct {
+	opt *buildCopTaskOpt
+}
+
+func buildCopTasksAsync(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) *copTaskAsyncBuilder {
+	return nil
+}
+
+func (b *copTaskAsyncBuilder) Next() (*copTask, error) {
+	return nil, nil
 }
 
 // CopInfo is used to expose functions of copIterator.
