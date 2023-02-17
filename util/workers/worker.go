@@ -23,6 +23,7 @@ type WorkerManager[task any, w Worker[task]] struct {
 	used      atomic.Int32
 	count     atomic.Int32
 	closed    atomic.Bool
+	flying    atomic.Int64
 	ctx       context.Context
 	cancel    context.CancelFunc
 	newWorker NewWorker[task, w]
@@ -65,7 +66,9 @@ func (p *WorkerManager[task, w]) Size() int {
 
 // Send sends task to worker and return whether the job is closed.
 func (p *WorkerManager[task, w]) Send(t task) bool {
+	p.flying.Add(1)
 	if p.closed.Load() {
+		p.flying.Add(-1)
 		return true
 	}
 	count := p.count.Load()
@@ -80,16 +83,27 @@ func (p *WorkerManager[task, w]) Send(t task) bool {
 				break
 			}
 		}
+		if p.closed.Load() {
+			p.flying.Add(-1)
+			return true
+		}
 		if count < p.max {
 			p.createWorker(int(count))
 		}
+	} else {
+		if p.closed.Load() {
+			p.flying.Add(-1)
+			return true
+		}
 	}
+	var res bool
 	select {
 	case <-p.closeCh:
-		return true
+		res = true
 	case p.ch <- t:
-		return false
 	}
+	p.flying.Add(-1)
+	return res
 }
 
 func (p *WorkerManager[task, w]) createWorker(idx int) {
@@ -117,16 +131,27 @@ func (p *WorkerManager[task, w]) createWorker(idx int) {
 	}()
 }
 
-// Close the manager, this will stop handling tasks and quit all workers.
+// Close the manager, this will stop handling flying and quit all workers.
 func (p *WorkerManager[task, w]) Close(wait bool) {
 	if p.closed.CompareAndSwap(false, true) {
 		return
 	}
-	close(p.closeCh)
-	close(p.ch)
-	p.cancel()
 	if wait {
+		// wait for all tasks enqueue.
+		for p.flying.Load() > 0 {
+		}
+		// close p.ch after it's not accessible.
+		close(p.ch)
 		p.wg.Wait()
+		close(p.closeCh)
+		p.cancel()
+	} else {
+		// quick stop tasks
+		close(p.closeCh)
+		p.cancel()
+		for p.flying.Load() > 0 {
+		}
+		// close p.ch after it's not accessible.
+		close(p.ch)
 	}
-	// if wait is set to false, p.ch will be closed when the last worker exits.
 }

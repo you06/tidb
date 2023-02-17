@@ -16,6 +16,7 @@ package copr
 
 import (
 	"bytes"
+	"container/list"
 	"strconv"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -63,7 +64,8 @@ type LocationKeyRanges struct {
 	// Location is the real location in PD.
 	Location *tikv.KeyLocation
 	// Ranges is the logic ranges the current Location contains.
-	Ranges *KeyRanges
+	Ranges  *KeyRanges
+	rowHint *int
 }
 
 func (l *LocationKeyRanges) getBucketVersion() uint64 {
@@ -94,7 +96,7 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 		}
 		// All rest ranges belong to the same bucket.
 		if i == ranges.Len() {
-			res = append(res, &LocationKeyRanges{l.Location, ranges})
+			res = append(res, &LocationKeyRanges{Location: l.Location, Ranges: ranges})
 			break
 		}
 
@@ -105,7 +107,7 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 				StartKey: r.StartKey,
 				EndKey:   bucket.EndKey,
 			}
-			res = append(res, &LocationKeyRanges{l.Location, taskRanges})
+			res = append(res, &LocationKeyRanges{Location: l.Location, Ranges: taskRanges})
 
 			ranges = ranges.Slice(i+1, ranges.Len())
 			ranges.first = &kv.KeyRange{
@@ -115,7 +117,7 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 		} else {
 			// ranges[i] is not in the bucket.
 			taskRanges := ranges.Slice(0, i)
-			res = append(res, &LocationKeyRanges{l.Location, taskRanges})
+			res = append(res, &LocationKeyRanges{Location: l.Location, Ranges: taskRanges})
 			ranges = ranges.Slice(i, ranges.Len())
 		}
 	}
@@ -232,4 +234,122 @@ func (c *RegionCache) BuildBatchTask(bo *Backoffer, task *copTask, replicaRead k
 		storeID: rpcContext.Store.StoreID(),
 		peer:    rpcContext.Peer,
 	}, nil
+}
+
+type locElem struct {
+	locs []*LocationKeyRanges // valid cached locs
+	miss *kv.KeyRange
+}
+
+func locElemFromLocs(locs []*LocationKeyRanges) *locElem {
+	return &locElem{
+		locs: locs,
+	}
+}
+
+func locElemFromMiss(ranges *kv.KeyRange) *locElem {
+	return &locElem{
+		miss: ranges,
+	}
+}
+
+// SplitCachedKeyRangesByLocations splits the cached KeyRanges by logical info in the cache,
+// there may be remained ranges.
+func (c *RegionCache) SplitCachedKeyRangesByLocations(ranges *KeyRanges, hints []int, keepOrder bool) *list.List {
+	if ranges.Len() != len(hints) {
+		hints = nil
+	}
+	res := list.New()
+	locs := make([]*LocationKeyRanges, 0)
+	for ranges.Len() > 0 {
+		var loc *tikv.KeyLocation
+		remain := ranges.Len()
+		var i int
+		for ; i < remain; i++ {
+			keyRange := ranges.RefAt(i)
+			loc = c.TryLocateKey(keyRange.StartKey)
+			if loc != nil {
+				break
+			}
+			// in keep-order mode, we can't mess the cached locs up.
+			if len(locs) > 0 && keepOrder {
+				res.PushBack(locElemFromLocs(locs))
+				locs = make([]*LocationKeyRanges, 0)
+			}
+			res.PushBack(locElemFromMiss(keyRange))
+		}
+		// ranges is drained.
+		if loc == nil {
+			break
+		}
+		// loc of ith range exist.
+		ranges = ranges.Slice(i, ranges.Len())
+		hints = hints[i:]
+
+		// Iterate to the first range that is not complete in the region.
+		var r *kv.KeyRange
+		i = 0
+		for ; i < ranges.Len(); i++ {
+			r = ranges.RefAt(i)
+			if !(loc.Contains(r.EndKey) || bytes.Equal(loc.EndKey, r.EndKey)) {
+				break
+			}
+		}
+		// All rest ranges belong to the same region.
+		if i == ranges.Len() {
+			locKeyRanges := &LocationKeyRanges{Location: loc, Ranges: ranges}
+			if hints != nil {
+				hint := 0
+				for ; i < len(hints); i++ {
+					hint += hints[i]
+				}
+				locKeyRanges.rowHint = &hint
+			}
+			locs = append(locs, locKeyRanges)
+			break
+		}
+
+		if loc.Contains(r.StartKey) {
+			// Part of r is not in the region. We need to split it.
+			taskRanges := ranges.Slice(0, i)
+			taskRanges.last = &kv.KeyRange{
+				StartKey: r.StartKey,
+				EndKey:   loc.EndKey,
+			}
+			locKeyRanges := &LocationKeyRanges{Location: loc, Ranges: taskRanges}
+			if hints != nil {
+				hint := 0
+				for j := 0; i < i; j++ {
+					hint += hints[j]
+				}
+				locKeyRanges.rowHint = &hint
+			}
+			locs = append(locs, locKeyRanges)
+
+			ranges = ranges.Slice(i+1, ranges.Len())
+			ranges.first = &kv.KeyRange{
+				StartKey: loc.EndKey,
+				EndKey:   r.EndKey,
+			}
+		} else {
+			// rs[i] is not in the region.
+			taskRanges := ranges.Slice(0, i)
+			locKeyRanges := &LocationKeyRanges{Location: loc, Ranges: taskRanges}
+			if hints != nil {
+				hint := 0
+				for j := 0; i < i; j++ {
+					hint += hints[j]
+				}
+				locKeyRanges.rowHint = &hint
+			}
+			locs = append(locs, locKeyRanges)
+			ranges = ranges.Slice(i, ranges.Len())
+		}
+		hints = hints[i:]
+	}
+	if len(locs) > 0 {
+		res.PushBack(locElemFromLocs(locs))
+	}
+
+	return res
 }

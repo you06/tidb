@@ -15,6 +15,7 @@
 package copr
 
 import (
+	"container/list"
 	"context"
 	"fmt"
 	"math"
@@ -24,6 +25,8 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+	"github.com/pingcap/tidb/util/workers"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -616,16 +619,275 @@ func smallTaskConcurrency(tasks []*copTask, numcpu int) (int, int) {
 }
 
 type copTaskAsyncBuilder struct {
-	opt *buildCopTaskOpt
+	bo     *Backoffer
+	opt    *buildCopTaskOpt
+	ranges *kv.KeyRanges
+
+	tasks     *list.List
+	currElem  *list.Element
+	currValue *taskElem
+	currIndex int
+
+	allHit bool
+	errCh  chan error
+	// mess up the misses and hits key locations in non-keep-order mode.
+	misses []*kv.KeyRange
+	hits   []*LocationKeyRanges
+
+	pool *workers.WorkerManager[*taskElem, *copTaskAsyncBuilderWorker]
 }
 
-func buildCopTasksAsync(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) *copTaskAsyncBuilder {
+type taskElem struct {
+	tasks  []*copTask    // already exist tasks
+	done   chan *copTask // wait for loading region cache.
+	miss   *kv.KeyRange
+	misses []*kv.KeyRange
+}
+
+func taskElemFromTasks(tasks []*copTask) *taskElem {
+	return &taskElem{
+		tasks: tasks,
+	}
+}
+
+func taskElemFromMiss(miss *kv.KeyRange) *taskElem {
+	return &taskElem{
+		done: make(chan *copTask),
+		miss: miss,
+	}
+}
+
+func taskElemFromMisses(misses []*kv.KeyRange) *taskElem {
+	return &taskElem{
+		done:   make(chan *copTask, len(misses)),
+		misses: misses,
+	}
+}
+
+func buildCopTasksAsync(bo *Backoffer, ranges *kv.KeyRanges, opt *buildCopTaskOpt) (*copTaskAsyncBuilder, error) {
+	asyncBuilder := &copTaskAsyncBuilder{
+		bo:     bo,
+		opt:    opt,
+		ranges: ranges,
+		tasks:  list.New(),
+		allHit: true,
+	}
+	err := asyncBuilder.buildCachedTasks()
+	if err != nil {
+		return nil, err
+	}
+	if !asyncBuilder.allHit {
+		asyncBuilder.errCh = make(chan error)
+		go asyncBuilder.buildMissedTasks()
+	}
+	return asyncBuilder, nil
+}
+
+func (b *copTaskAsyncBuilder) buildCachedTasks() error {
+	req := b.opt.req
+	if req.StoreType == kv.TiDB {
+		return b.ranges.ForEachPartitionWithErr(func(ranges []kv.KeyRange, _ []int) error {
+			keyRanges := NewKeyRanges(ranges)
+			tasks, err := buildTiDBMemCopTasks(keyRanges, req)
+			if err != nil {
+				return err
+			}
+			b.tasks.PushBack(taskElemFromTasks(tasks))
+			return nil
+		})
+	}
+	// store is TiKV
+	if !req.KeepOrder {
+		b.hits = make([]*LocationKeyRanges, 0, 16)
+		b.misses = make([]*kv.KeyRange, 0, 16)
+	}
+	if err := b.ranges.ForEachPartitionWithErr(b.buildCachedTasksForRanges); err != nil {
+		return err
+	}
+	// keep-order tasks are already pushed.
+	if req.KeepOrder {
+		return nil
+	}
+	tasks, err := b.buildTiKVCopTaskFromLocs(b.hits)
+	if err != nil {
+		return err
+	}
+	b.tasks.PushBack(taskElemFromTasks(tasks))
+	b.tasks.PushBack(taskElemFromMisses(b.misses))
 	return nil
 }
 
+func (b *copTaskAsyncBuilder) buildCachedTasksForRanges(ranges []kv.KeyRange, hints []int) error {
+	keyRanges := NewKeyRanges(ranges)
+	locsAndRemains := b.opt.cache.SplitCachedKeyRangesByLocations(keyRanges, hints, b.opt.req.KeepOrder)
+	return b.buildCachedTaskForLocs(locsAndRemains)
+}
+
+func (b *copTaskAsyncBuilder) buildCachedTaskForLocs(locsAndRemains *list.List) error {
+	// Iterate through list and print its contents.
+	for e := locsAndRemains.Front(); e != nil; e = e.Next() {
+		locOrMiss := e.Value.(*locElem)
+		if locs := locOrMiss.locs; locs != nil {
+			if b.opt.req.KeepOrder {
+				b.hits = append(b.hits, locs...)
+			} else {
+				tasks, err := b.buildTiKVCopTaskFromLocs(locs)
+				if err != nil {
+					return err
+				}
+				b.tasks.PushBack(taskElemFromTasks(tasks))
+			}
+		} else if miss := locOrMiss.miss; miss != nil {
+			b.allHit = false
+			if b.opt.req.KeepOrder {
+				b.misses = append(b.misses, miss)
+			} else {
+				b.tasks.PushBack(taskElemFromMiss(miss))
+			}
+		}
+	}
+	return nil
+}
+
+func (b *copTaskAsyncBuilder) buildTiKVCopTaskFromLocs(locs []*LocationKeyRanges) ([]*copTask, error) {
+	opt := b.opt
+	req, cache, eventCb := opt.req, opt.cache, opt.eventCb
+	rangesPerTaskLimit := rangesPerTask
+	failpoint.Inject("setRangesPerTask", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			rangesPerTaskLimit = v
+		}
+	})
+	cmdType := tikvrpc.CmdCop
+	// Channel buffer is 2 for handling region split.
+	// In a common case, two region split tasks will not be blocked.
+	chanSize := 2
+	// in paging request, a request will be returned in multi batches,
+	// enlarge the channel size to avoid the request blocked by buffer full.
+	if req.Paging.Enable {
+		chanSize = 18
+	}
+
+	var builder taskBuilder
+	if req.StoreBatchSize > 0 {
+		builder = newBatchTaskBuilder(b.bo, req, cache)
+	} else {
+		builder = newLegacyTaskBuilder(len(locs))
+	}
+
+	for _, loc := range locs {
+		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
+		// to make sure the message can be sent successfully.
+		rLen := loc.Ranges.Len()
+		// If this is a paging request, we set the paging size to minPagingSize,
+		// the size will grow every round.
+		pagingSize := uint64(0)
+		if req.Paging.Enable {
+			pagingSize = req.Paging.MinPagingSize
+		}
+		for i := 0; i < rLen; {
+			nextI := mathutil.Min(i+rangesPerTaskLimit, rLen)
+			hint := -1
+			// calculate the row count hint
+			if loc.rowHint != nil {
+				hint = *loc.rowHint
+			}
+			task := &copTask{
+				region:        loc.Location.Region,
+				bucketsVer:    loc.getBucketVersion(),
+				ranges:        loc.Ranges.Slice(i, nextI),
+				cmdType:       cmdType,
+				storeType:     req.StoreType,
+				eventCb:       eventCb,
+				paging:        req.Paging.Enable,
+				pagingSize:    pagingSize,
+				requestSource: req.RequestSource,
+				RowCountHint:  hint,
+			}
+			// only keep-order need chan inside task.
+			// tasks by region error will reuse the channel of parent task.
+			if req.KeepOrder && opt.respChan {
+				task.respChan = make(chan *copResponse, chanSize)
+			}
+			if err := builder.handle(task); err != nil {
+				return nil, err
+			}
+			i = nextI
+			if req.Paging.Enable {
+				if req.LimitSize != 0 && req.LimitSize < pagingSize {
+					// disable paging for small limit.
+					task.paging = false
+					task.pagingSize = 0
+				} else {
+					pagingSize = paging.GrowPagingSize(pagingSize, req.Paging.MaxPagingSize)
+				}
+			}
+		}
+	}
+	return builder.build(), nil
+}
+
 func (b *copTaskAsyncBuilder) Next() (*copTask, error) {
+	if b.currElem == nil {
+	}
 	return nil, nil
 }
+
+func (b *copTaskAsyncBuilder) buildMissedTasks() {
+	pool := workers.New(b.bo.GetCtx(), 1, 5, func() *copTaskAsyncBuilderWorker {
+		return &copTaskAsyncBuilderWorker{
+			builder: b,
+		}
+	}, (**taskElem)(nil))
+	defer func() {
+		pool.Close(true)
+	}()
+	b.pool = pool
+	req := b.opt.req
+	if req.KeepOrder {
+		if req.Desc {
+			for e := b.tasks.Back(); e != nil; e = e.Prev() {
+				elem := e.Value.(*taskElem)
+				if elem.miss == nil {
+					continue
+				}
+				pool.Send(elem)
+			}
+		} else {
+			for e := b.tasks.Front(); e != nil; e = e.Next() {
+				elem := e.Value.(*taskElem)
+				if elem.miss == nil {
+					continue
+				}
+				pool.Send(elem)
+			}
+		}
+	} else {
+		for e := b.tasks.Front(); e != nil; e = e.Next() {
+			elem := e.Value.(*taskElem)
+			if elem.misses == nil {
+				continue
+			}
+			for _, miss := range elem.misses {
+				dispatchedTask := &taskElem{
+					done: elem.done,
+					miss: miss,
+				}
+				pool.Send(dispatchedTask)
+			}
+		}
+	}
+}
+
+type copTaskAsyncBuilderWorker struct {
+	builder *copTaskAsyncBuilder
+}
+
+func (w *copTaskAsyncBuilderWorker) HandleTask(context.Context, *taskElem) error {
+	return nil
+}
+
+func (w *copTaskAsyncBuilderWorker) Close() {}
 
 // CopInfo is used to expose functions of copIterator.
 type CopInfo interface {
