@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "workers",
+    srcs = ["worker.go"],
+    importpath = "github.com/pingcap/tidb/util/workers",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "workers_test",
+    srcs = [
+        "bench_test.go",
+        "worker_test.go",
+    ],
+    embed = [":workers"],
+    deps = ["@com_github_stretchr_testify//require"],
+)

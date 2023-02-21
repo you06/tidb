@@ -239,6 +239,7 @@ func (c *RegionCache) BuildBatchTask(bo *Backoffer, task *copTask, replicaRead k
 type locElem struct {
 	locs []*LocationKeyRanges // valid cached locs
 	miss *kv.KeyRange
+	hint int
 }
 
 func locElemFromLocs(locs []*LocationKeyRanges) *locElem {
@@ -247,15 +248,16 @@ func locElemFromLocs(locs []*LocationKeyRanges) *locElem {
 	}
 }
 
-func locElemFromMiss(ranges *kv.KeyRange) *locElem {
+func locElemFromMiss(ranges *kv.KeyRange, hint int) *locElem {
 	return &locElem{
 		miss: ranges,
+		hint: hint,
 	}
 }
 
 // SplitCachedKeyRangesByLocations splits the cached KeyRanges by logical info in the cache,
 // there may be remained ranges.
-func (c *RegionCache) SplitCachedKeyRangesByLocations(ranges *KeyRanges, hints []int, keepOrder bool) *list.List {
+func (c *RegionCache) SplitCachedKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges, hints []int, keepOrder, tryCache bool) (*list.List, error) {
 	if ranges.Len() != len(hints) {
 		hints = nil
 	}
@@ -267,7 +269,15 @@ func (c *RegionCache) SplitCachedKeyRangesByLocations(ranges *KeyRanges, hints [
 		var i int
 		for ; i < remain; i++ {
 			keyRange := ranges.RefAt(i)
-			loc = c.TryLocateKey(keyRange.StartKey)
+			if tryCache {
+				loc = c.TryLocateKey(keyRange.StartKey)
+			} else {
+				var err error
+				loc, err = c.LocateKey(bo.TiKVBackoffer(), keyRange.StartKey)
+				if err != nil {
+					return nil, err
+				}
+			}
 			if loc != nil {
 				break
 			}
@@ -276,7 +286,11 @@ func (c *RegionCache) SplitCachedKeyRangesByLocations(ranges *KeyRanges, hints [
 				res.PushBack(locElemFromLocs(locs))
 				locs = make([]*LocationKeyRanges, 0)
 			}
-			res.PushBack(locElemFromMiss(keyRange))
+			hint := -1
+			if hints != nil {
+				hint = hints[i]
+			}
+			res.PushBack(locElemFromMiss(keyRange, hint))
 		}
 		// ranges is drained.
 		if loc == nil {
@@ -284,7 +298,9 @@ func (c *RegionCache) SplitCachedKeyRangesByLocations(ranges *KeyRanges, hints [
 		}
 		// loc of ith range exist.
 		ranges = ranges.Slice(i, ranges.Len())
-		hints = hints[i:]
+		if hints != nil {
+			hints = hints[i:]
+		}
 
 		// Iterate to the first range that is not complete in the region.
 		var r *kv.KeyRange
@@ -345,11 +361,13 @@ func (c *RegionCache) SplitCachedKeyRangesByLocations(ranges *KeyRanges, hints [
 			locs = append(locs, locKeyRanges)
 			ranges = ranges.Slice(i, ranges.Len())
 		}
-		hints = hints[i:]
+		if hints != nil {
+			hints = hints[i:]
+		}
 	}
 	if len(locs) > 0 {
 		res.PushBack(locElemFromLocs(locs))
 	}
 
-	return res
+	return res, nil
 }

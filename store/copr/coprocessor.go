@@ -173,10 +173,14 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		tasks = append(tasks, tasksFromRanges...)
 		return nil
 	}
+	_ = buildTaskFunc
 	// Here we build the task by partition, not directly by region.
 	// This is because it's possible that TiDB merge multiple small partition into one region which break some assumption.
 	// Keep it split by partition would be more safe.
-	err = req.KeyRanges.ForEachPartitionWithErr(buildTaskFunc)
+
+	//err = req.KeyRanges.ForEachPartitionWithErr(buildTaskFunc)
+	asyncBuilder, err := buildCopTasksAsync(bo, req.KeyRanges, buildOpt)
+
 	// only batch store requests in first build.
 	req.StoreBatchSize = 0
 	reqType := "null"
@@ -200,6 +204,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		replicaReadSeed:  c.replicaReadSeed,
 		rpcCancel:        tikv.NewRPCanceller(),
 		buildTaskElapsed: *buildOpt.elapsed,
+		asyncBuilder:     asyncBuilder,
 	}
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -477,6 +482,42 @@ func (b *legacyTaskBuilder) build() []*copTask {
 	return b.tasks
 }
 
+type asyncLegacyTaskBuilder struct {
+	region int
+	done   chan *copTask
+	inner  *copTaskAsyncBuilder
+}
+
+func newAsyncLegacyTaskBuilder(inner *copTaskAsyncBuilder, done chan *copTask) *asyncLegacyTaskBuilder {
+	return &asyncLegacyTaskBuilder{
+		inner: inner,
+		done:  done,
+	}
+}
+
+func (b *asyncLegacyTaskBuilder) handle(task *copTask) error {
+	if b.done != nil {
+		b.done <- task
+	} else {
+		b.inner.tasks.Lock()
+		b.inner.tasks.PushBack(taskElemFromTasks([]*copTask{task}))
+		b.inner.tasks.Unlock()
+	}
+	return nil
+}
+
+func (b *asyncLegacyTaskBuilder) regionNum() int {
+	return b.region
+}
+
+func (b *asyncLegacyTaskBuilder) reverse() {
+	// already reversed before starting building, do nothing.
+}
+
+func (b *asyncLegacyTaskBuilder) build() []*copTask {
+	return nil
+}
+
 type batchStoreTaskBuilder struct {
 	bo        *Backoffer
 	req       *kv.Request
@@ -495,7 +536,6 @@ func newBatchTaskBuilder(bo *Backoffer, req *kv.Request, cache *RegionCache) *ba
 		taskID:    0,
 		limit:     req.StoreBatchSize,
 		store2Idx: make(map[uint64]int, 16),
-		tasks:     make([]*copTask, 0, 16),
 	}
 }
 
@@ -550,6 +590,99 @@ func (b *batchStoreTaskBuilder) reverse() {
 
 func (b *batchStoreTaskBuilder) build() []*copTask {
 	return b.tasks
+}
+
+type asyncBatchStoreTaskBuilder struct {
+	bo         *Backoffer
+	req        *kv.Request
+	cache      *RegionCache
+	taskID     uint64
+	limit      int
+	store2Task map[uint64]*copTask
+	inner      *copTaskAsyncBuilder
+	done       chan *copTask
+}
+
+func newAsyncBatchTaskBuilder(bo *Backoffer, req *kv.Request, cache *RegionCache, inner *copTaskAsyncBuilder, done chan *copTask) *asyncBatchStoreTaskBuilder {
+	return &asyncBatchStoreTaskBuilder{
+		bo:         bo,
+		req:        req,
+		cache:      cache,
+		taskID:     0,
+		limit:      req.StoreBatchSize,
+		store2Task: make(map[uint64]*copTask, 16),
+		inner:      inner,
+		done:       done,
+	}
+}
+
+func (b *asyncBatchStoreTaskBuilder) send(task *copTask) {
+	if b.done != nil {
+		b.done <- task
+		return
+	}
+	b.inner.tasks.Lock()
+	b.inner.tasks.PushBack(taskElemFromTasks([]*copTask{task}))
+	b.inner.tasks.Unlock()
+}
+
+func (b *asyncBatchStoreTaskBuilder) handle(task *copTask) (err error) {
+	b.taskID++
+	task.taskID = b.taskID
+	handled := false
+	defer func() {
+		if !handled && err == nil {
+			// fallback to non-batch way. It's mainly caused by region miss.
+			b.send(task)
+		}
+	}()
+	// only batch small tasks for memory control.
+	if b.limit <= 0 || !isSmallTask(task) {
+		return nil
+	}
+	batchedTask, err := b.cache.BuildBatchTask(b.bo, task, b.req.ReplicaRead)
+	if err != nil {
+		return err
+	}
+	if batchedTask == nil {
+		return nil
+	}
+	storeID := batchedTask.storeID
+	if parent, ok := b.store2Task[storeID]; !ok {
+		b.store2Task[storeID] = task
+	} else {
+		if parent.batchTaskList == nil {
+			parent.batchTaskList = make(map[uint64]*batchedCopTask, b.limit)
+			parent.paging = false
+			parent.pagingSize = 0
+		}
+		if task.RowCountHint > 0 {
+			parent.RowCountHint += task.RowCountHint
+		}
+		parent.batchTaskList[task.taskID] = batchedTask
+		if len(parent.batchTaskList) >= b.limit {
+			delete(b.store2Task, storeID)
+			b.send(parent)
+		}
+	}
+	handled = true
+	return nil
+}
+
+func (b *asyncBatchStoreTaskBuilder) regionNum() int {
+	// we allocate b.taskID for each region task, so the final b.taskID is equal to the related region number.
+	return int(b.taskID)
+}
+
+func (b *asyncBatchStoreTaskBuilder) reverse() {
+}
+
+func (b *asyncBatchStoreTaskBuilder) build() []*copTask {
+	// handle remains
+	for _, task := range b.store2Task {
+		b.send(task)
+	}
+	return nil
 }
 
 func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error) {
@@ -623,16 +756,22 @@ type copTaskAsyncBuilder struct {
 	opt    *buildCopTaskOpt
 	ranges *kv.KeyRanges
 
-	tasks     *list.List
+	needLock bool
+	tasks    struct {
+		sync.Mutex
+		*list.List
+		immutable atomic.Bool // after the list is immutable, we can skip lock.
+	}
 	currElem  *list.Element
 	currValue *taskElem
 	currIndex int
 
 	allHit bool
 	errCh  chan error
-	// mess up the misses and hits key locations in non-keep-order mode.
-	misses []*kv.KeyRange
-	hits   []*LocationKeyRanges
+	// mess up the misses key locations in non-keep-order mode.
+	misses []kv.KeyRange
+	// record the miss tasks in keep-order mode
+	missTasks []*taskElem
 
 	pool *workers.WorkerManager[*taskElem, *copTaskAsyncBuilderWorker]
 }
@@ -641,7 +780,8 @@ type taskElem struct {
 	tasks  []*copTask    // already exist tasks
 	done   chan *copTask // wait for loading region cache.
 	miss   *kv.KeyRange
-	misses []*kv.KeyRange
+	misses []kv.KeyRange
+	hints  []int
 }
 
 func taskElemFromTasks(tasks []*copTask) *taskElem {
@@ -657,7 +797,7 @@ func taskElemFromMiss(miss *kv.KeyRange) *taskElem {
 	}
 }
 
-func taskElemFromMisses(misses []*kv.KeyRange) *taskElem {
+func taskElemFromMisses(misses []kv.KeyRange) *taskElem {
 	return &taskElem{
 		done:   make(chan *copTask, len(misses)),
 		misses: misses,
@@ -666,25 +806,27 @@ func taskElemFromMisses(misses []*kv.KeyRange) *taskElem {
 
 func buildCopTasksAsync(bo *Backoffer, ranges *kv.KeyRanges, opt *buildCopTaskOpt) (*copTaskAsyncBuilder, error) {
 	asyncBuilder := &copTaskAsyncBuilder{
-		bo:     bo,
-		opt:    opt,
-		ranges: ranges,
-		tasks:  list.New(),
+		bo:       bo,
+		opt:      opt,
+		ranges:   ranges,
+		needLock: true,
+		tasks: struct {
+			sync.Mutex
+			*list.List
+			immutable atomic.Bool
+		}{List: list.New()},
 		allHit: true,
+		errCh:  make(chan error),
 	}
-	err := asyncBuilder.buildCachedTasks()
-	if err != nil {
+	if err := asyncBuilder.buildCachedTasks(); err != nil {
 		return nil, err
-	}
-	if !asyncBuilder.allHit {
-		asyncBuilder.errCh = make(chan error)
-		go asyncBuilder.buildMissedTasks()
 	}
 	return asyncBuilder, nil
 }
 
 func (b *copTaskAsyncBuilder) buildCachedTasks() error {
 	req := b.opt.req
+	// build tidb tasks in the current goroutine, it's fast.
 	if req.StoreType == kv.TiDB {
 		return b.ranges.ForEachPartitionWithErr(func(ranges []kv.KeyRange, _ []int) error {
 			keyRanges := NewKeyRanges(ranges)
@@ -695,31 +837,34 @@ func (b *copTaskAsyncBuilder) buildCachedTasks() error {
 			b.tasks.PushBack(taskElemFromTasks(tasks))
 			return nil
 		})
+		b.tasks.immutable.Store(true)
 	}
-	// store is TiKV
-	if !req.KeepOrder {
-		b.hits = make([]*LocationKeyRanges, 0, 16)
-		b.misses = make([]*kv.KeyRange, 0, 16)
-	}
-	if err := b.ranges.ForEachPartitionWithErr(b.buildCachedTasksForRanges); err != nil {
-		return err
-	}
-	// keep-order tasks are already pushed.
-	if req.KeepOrder {
-		return nil
-	}
-	tasks, err := b.buildTiKVCopTaskFromLocs(b.hits)
-	if err != nil {
-		return err
-	}
-	b.tasks.PushBack(taskElemFromTasks(tasks))
-	b.tasks.PushBack(taskElemFromMisses(b.misses))
+	// build tikv tasks in another goroutine.
+	go func() {
+		var err error
+		defer func() {
+			if err != nil {
+				b.errCh <- err
+			}
+		}()
+		// store is TiKV
+		if err = b.ranges.ForEachPartitionWithErr(b.buildCachedTasksForRanges); err != nil {
+			return
+		}
+		if !req.KeepOrder && len(b.misses) > 0 {
+			b.tasks.PushBack(taskElemFromMisses(b.misses))
+		}
+		b.tasks.immutable.Store(true)
+		if !b.allHit {
+			b.buildMissedTasks()
+		}
+	}()
 	return nil
 }
 
 func (b *copTaskAsyncBuilder) buildCachedTasksForRanges(ranges []kv.KeyRange, hints []int) error {
 	keyRanges := NewKeyRanges(ranges)
-	locsAndRemains := b.opt.cache.SplitCachedKeyRangesByLocations(keyRanges, hints, b.opt.req.KeepOrder)
+	locsAndRemains, _ := b.opt.cache.SplitCachedKeyRangesByLocations(nil, keyRanges, hints, b.opt.req.KeepOrder, true)
 	return b.buildCachedTaskForLocs(locsAndRemains)
 }
 
@@ -729,27 +874,39 @@ func (b *copTaskAsyncBuilder) buildCachedTaskForLocs(locsAndRemains *list.List) 
 		locOrMiss := e.Value.(*locElem)
 		if locs := locOrMiss.locs; locs != nil {
 			if b.opt.req.KeepOrder {
-				b.hits = append(b.hits, locs...)
-			} else {
-				tasks, err := b.buildTiKVCopTaskFromLocs(locs)
-				if err != nil {
+				if err := b.buildTiKVCopTaskFromLocs(locs, nil); err != nil {
 					return err
 				}
-				b.tasks.PushBack(taskElemFromTasks(tasks))
+			} else {
+				if err := b.buildTiKVCopTaskFromLocs(locs, nil); err != nil {
+					return err
+				}
 			}
 		} else if miss := locOrMiss.miss; miss != nil {
-			b.allHit = false
+			if b.allHit == true {
+				b.allHit = false
+			}
 			if b.opt.req.KeepOrder {
-				b.misses = append(b.misses, miss)
+				task := taskElemFromMiss(miss)
+				b.tasks.Lock()
+				b.tasks.PushBack(task)
+				b.tasks.Unlock()
+				if b.missTasks == nil {
+					b.missTasks = make([]*taskElem, 0, 16)
+				}
+				b.missTasks = append(b.missTasks, task)
 			} else {
-				b.tasks.PushBack(taskElemFromMiss(miss))
+				if b.misses == nil {
+					b.misses = make([]kv.KeyRange, 0, 16)
+				}
+				b.misses = append(b.misses, *miss)
 			}
 		}
 	}
 	return nil
 }
 
-func (b *copTaskAsyncBuilder) buildTiKVCopTaskFromLocs(locs []*LocationKeyRanges) ([]*copTask, error) {
+func (b *copTaskAsyncBuilder) buildTiKVCopTaskFromLocs(locs []*LocationKeyRanges, done chan *copTask) error {
 	opt := b.opt
 	req, cache, eventCb := opt.req, opt.cache, opt.eventCb
 	rangesPerTaskLimit := rangesPerTask
@@ -769,10 +926,10 @@ func (b *copTaskAsyncBuilder) buildTiKVCopTaskFromLocs(locs []*LocationKeyRanges
 	}
 
 	var builder taskBuilder
-	if req.StoreBatchSize > 0 {
-		builder = newBatchTaskBuilder(b.bo, req, cache)
+	if req.StoreBatchSize > 0 && !req.KeepOrder {
+		builder = newAsyncBatchTaskBuilder(b.bo, req, cache, b, done)
 	} else {
-		builder = newLegacyTaskBuilder(len(locs))
+		builder = newAsyncLegacyTaskBuilder(b, done)
 	}
 
 	for _, loc := range locs {
@@ -810,7 +967,7 @@ func (b *copTaskAsyncBuilder) buildTiKVCopTaskFromLocs(locs []*LocationKeyRanges
 				task.respChan = make(chan *copResponse, chanSize)
 			}
 			if err := builder.handle(task); err != nil {
-				return nil, err
+				return err
 			}
 			i = nextI
 			if req.Paging.Enable {
@@ -824,11 +981,78 @@ func (b *copTaskAsyncBuilder) buildTiKVCopTaskFromLocs(locs []*LocationKeyRanges
 			}
 		}
 	}
-	return builder.build(), nil
+	builder.build()
+	return nil
 }
 
-func (b *copTaskAsyncBuilder) Next() (*copTask, error) {
+func (b *copTaskAsyncBuilder) Next() (task *copTask, err error) {
+	nextElem := func() bool {
+		if b.needLock && b.tasks.immutable.Load() {
+			b.needLock = false
+		}
+		if b.needLock {
+			b.tasks.Lock()
+		}
+		if b.opt.req.KeepOrder && b.opt.req.Desc {
+			if b.currElem == nil {
+				b.currElem = b.tasks.Back()
+			} else {
+				b.currElem = b.currElem.Prev()
+			}
+		} else {
+			if b.currElem == nil {
+				b.currElem = b.tasks.Front()
+			} else {
+				b.currElem = b.currElem.Next()
+			}
+		}
+		if b.needLock {
+			b.tasks.Unlock()
+		}
+		if b.currElem != nil {
+			b.currValue = b.currElem.Value.(*taskElem)
+			return true
+		}
+		return false
+	}
+
+	// clean up
+	defer func() {
+		if task == nil && err == nil {
+			close(b.errCh)
+		}
+	}()
+
 	if b.currElem == nil {
+		if !nextElem() {
+			return nil, nil
+		}
+	}
+	for {
+		select {
+		case err = <-b.errCh:
+			return nil, err
+		default:
+		}
+		if len(b.currValue.tasks) > 0 {
+			task = b.currValue.tasks[0]
+			b.currValue.tasks = b.currValue.tasks[1:]
+			return task, nil
+		} else if b.currValue.done != nil {
+			var ok bool
+			select {
+			case task, ok = <-b.currValue.done:
+			case err = <-b.errCh:
+				return nil, err
+			}
+			if ok {
+				return task, nil
+			}
+		} else {
+			if nextElem() {
+				return nil, nil
+			}
+		}
 	}
 	return nil, nil
 }
@@ -863,18 +1087,12 @@ func (b *copTaskAsyncBuilder) buildMissedTasks() {
 			}
 		}
 	} else {
-		for e := b.tasks.Front(); e != nil; e = e.Next() {
+		for e := b.tasks.Back(); e != nil; e = e.Prev() {
 			elem := e.Value.(*taskElem)
 			if elem.misses == nil {
 				continue
 			}
-			for _, miss := range elem.misses {
-				dispatchedTask := &taskElem{
-					done: elem.done,
-					miss: miss,
-				}
-				pool.Send(dispatchedTask)
-			}
+			pool.Send(elem)
 		}
 	}
 }
@@ -883,8 +1101,14 @@ type copTaskAsyncBuilderWorker struct {
 	builder *copTaskAsyncBuilder
 }
 
-func (w *copTaskAsyncBuilderWorker) HandleTask(context.Context, *taskElem) error {
-	return nil
+func (w *copTaskAsyncBuilderWorker) HandleTask(_ context.Context, task *taskElem) error {
+	keyRanges := NewKeyRanges(task.misses)
+	locsAndRemains, err := w.builder.opt.cache.SplitCachedKeyRangesByLocations(w.builder.bo, keyRanges, nil, w.builder.opt.req.KeepOrder, false)
+	if err != nil {
+		return err
+	}
+	locs := make([]*LocationKeyRanges, 0, locsAndRemains.Len())
+	return w.builder.buildTiKVCopTaskFromLocs(locs, task.done)
 }
 
 func (w *copTaskAsyncBuilderWorker) Close() {}
@@ -940,6 +1164,8 @@ type copIterator struct {
 	buildTaskElapsed        time.Duration
 	storeBatchedNum         atomic.Uint64
 	storeBatchedFallbackNum atomic.Uint64
+
+	asyncBuilder *copTaskAsyncBuilder
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -966,13 +1192,14 @@ type copIteratorWorker struct {
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
 type copIteratorTaskSender struct {
-	taskCh      chan<- *copTask
-	smallTaskCh chan<- *copTask
-	wg          *sync.WaitGroup
-	tasks       []*copTask
-	finishCh    <-chan struct{}
-	respChan    chan<- *copResponse
-	sendRate    *util.RateLimit
+	taskCh       chan<- *copTask
+	smallTaskCh  chan<- *copTask
+	wg           *sync.WaitGroup
+	tasks        []*copTask
+	finishCh     <-chan struct{}
+	respChan     chan<- *copResponse
+	sendRate     *util.RateLimit
+	asyncBuilder *copTaskAsyncBuilder
 }
 
 type copResponse struct {
@@ -1100,12 +1327,13 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 		go worker.run(ctx)
 	}
 	taskSender := &copIteratorTaskSender{
-		taskCh:      taskCh,
-		smallTaskCh: smallTaskCh,
-		wg:          &it.wg,
-		tasks:       it.tasks,
-		finishCh:    it.finishCh,
-		sendRate:    it.sendRate,
+		taskCh:       taskCh,
+		smallTaskCh:  smallTaskCh,
+		wg:           &it.wg,
+		tasks:        it.tasks,
+		finishCh:     it.finishCh,
+		sendRate:     it.sendRate,
+		asyncBuilder: it.asyncBuilder,
 	}
 	taskSender.respChan = it.respChan
 	it.actionOnExceed.setEnabled(enabledRateLimitAction)
@@ -1120,7 +1348,16 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 
 func (sender *copIteratorTaskSender) run() {
 	// Send tasks to feed the worker goroutines.
-	for _, t := range sender.tasks {
+	for {
+		task, err := sender.asyncBuilder.Next()
+		if err != nil {
+			// stop iterator and return error
+			// panic for test
+			panic(err)
+		}
+		if task == nil {
+			break
+		}
 		// we control the sending rate to prevent all tasks
 		// being done (aka. all of the responses are buffered) by copIteratorWorker.
 		// We keep the number of inflight tasks within the number of 2 * concurrency when Keep Order is true.
@@ -1130,13 +1367,13 @@ func (sender *copIteratorTaskSender) run() {
 		if exit {
 			break
 		}
-		var sendTo chan<- *copTask
-		if isSmallTask(t) {
-			sendTo = sender.smallTaskCh
-		} else {
-			sendTo = sender.taskCh
-		}
-		exit = sender.sendToTaskCh(t, sendTo)
+		//var sendTo chan<- *copTask
+		//if isSmallTask(t) {
+		//	sendTo = sender.smallTaskCh
+		//} else {
+		//	sendTo = sender.taskCh
+		//}
+		exit = sender.sendToTaskCh(task, sender.taskCh)
 		if exit {
 			break
 		}
