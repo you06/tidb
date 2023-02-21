@@ -16,7 +16,6 @@ package copr
 
 import (
 	"bytes"
-	"container/list"
 	"strconv"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -238,8 +237,8 @@ func (c *RegionCache) BuildBatchTask(bo *Backoffer, task *copTask, replicaRead k
 
 type locElem struct {
 	locs []*LocationKeyRanges // valid cached locs
-	miss *kv.KeyRange
-	hint int
+	miss []kv.KeyRange
+	hint []int
 }
 
 func locElemFromLocs(locs []*LocationKeyRanges) *locElem {
@@ -248,21 +247,41 @@ func locElemFromLocs(locs []*LocationKeyRanges) *locElem {
 	}
 }
 
-func locElemFromMiss(ranges *kv.KeyRange, hint int) *locElem {
+func locElemFromMiss(misses []kv.KeyRange, hints []int) *locElem {
 	return &locElem{
-		miss: ranges,
-		hint: hint,
+		miss: misses,
+		hint: hints,
 	}
 }
 
-// SplitCachedKeyRangesByLocations splits the cached KeyRanges by logical info in the cache,
+// SplitKeyRangesByLocations1 splits the cached KeyRanges by logical info in the cache,
 // there may be remained ranges.
-func (c *RegionCache) SplitCachedKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges, hints []int, keepOrder, tryCache bool) (*list.List, error) {
+// It may replace the usage of SplitKeyRangesByLocations.
+func (c *RegionCache) SplitKeyRangesByLocations1(bo *Backoffer, ranges *KeyRanges, hints []int, keepOrder, tryCache bool) ([]*locElem, error) {
 	if ranges.Len() != len(hints) {
 		hints = nil
 	}
-	res := list.New()
-	locs := make([]*LocationKeyRanges, 0)
+	var (
+		res       []*locElem
+		locs      []*LocationKeyRanges
+		misses    []kv.KeyRange
+		missHints []int
+	)
+	if keepOrder {
+		res = make([]*locElem, 0, 16)
+		locs = make([]*LocationKeyRanges, 0, 2)
+		misses = make([]kv.KeyRange, 0, 2)
+		if hints != nil {
+			missHints = make([]int, 0, 2)
+		}
+	} else {
+		res = make([]*locElem, 0, 2)
+		locs = make([]*LocationKeyRanges, 0, 16)
+		misses = make([]kv.KeyRange, 0, 16)
+		if hints != nil {
+			missHints = make([]int, 0, 16)
+		}
+	}
 	for ranges.Len() > 0 {
 		var loc *tikv.KeyLocation
 		remain := ranges.Len()
@@ -281,20 +300,40 @@ func (c *RegionCache) SplitCachedKeyRangesByLocations(bo *Backoffer, ranges *Key
 			if loc != nil {
 				break
 			}
-			// in keep-order mode, we can't mess the cached locs up.
-			if len(locs) > 0 && keepOrder {
-				res.PushBack(locElemFromLocs(locs))
-				locs = make([]*LocationKeyRanges, 0)
-			}
 			hint := -1
-			if hints != nil {
-				hint = hints[i]
+			if keepOrder {
+				// in keep-order mode, we can't mess the cached locs up.
+				if len(locs) > 0 {
+					res = append(res, locElemFromLocs(locs))
+					locs = make([]*LocationKeyRanges, 0, 2)
+				}
+			} else {
+				if hints != nil {
+					hint = hints[i]
+				}
 			}
-			res.PushBack(locElemFromMiss(keyRange, hint))
+			misses = append(misses, *keyRange)
+			if hint >= 0 {
+				hints = append(hints, hint)
+			}
 		}
 		// ranges is drained.
 		if loc == nil {
 			break
+		}
+		// in keep-order mode, we can't mess the misses ranges up.
+		if keepOrder && len(misses) > 0 {
+			if len(missHints) == len(misses) {
+				res = append(res, locElemFromMiss(misses, missHints))
+			} else {
+				res = append(res, locElemFromMiss(misses, nil))
+			}
+			misses = make([]kv.KeyRange, 0, 2)
+			if hints != nil {
+				missHints = make([]int, 0, 2)
+			} else {
+				missHints = nil
+			}
 		}
 		// loc of ith range exist.
 		ranges = ranges.Slice(i, ranges.Len())
@@ -366,8 +405,13 @@ func (c *RegionCache) SplitCachedKeyRangesByLocations(bo *Backoffer, ranges *Key
 		}
 	}
 	if len(locs) > 0 {
-		res.PushBack(locElemFromLocs(locs))
+		res = append(res, locElemFromLocs(locs))
 	}
-
+	if len(misses) > 0 {
+		if len(misses) != len(missHints) {
+			missHints = nil
+		}
+		res = append(res, locElemFromMiss(misses, missHints))
+	}
 	return res, nil
 }

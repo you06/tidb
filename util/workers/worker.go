@@ -52,9 +52,11 @@ func New[task any, w Worker[task]](ctx context.Context, least, max int, newWorke
 		closeCh:   make(chan struct{}),
 		wg:        sync.WaitGroup{},
 	}
-	worker.count.Add(int32(least))
-	for i := 0; i < least; i++ {
-		worker.createWorker(i)
+	if least > 0 {
+		worker.count.Add(int32(least))
+		for i := 0; i < least; i++ {
+			worker.createWorker(i)
+		}
 	}
 	return worker
 }
@@ -133,7 +135,7 @@ func (p *WorkerManager[task, w]) createWorker(idx int) {
 
 // Close the manager, this will stop handling flying and quit all workers.
 func (p *WorkerManager[task, w]) Close(wait bool) {
-	if p.closed.CompareAndSwap(false, true) {
+	if !p.closed.CompareAndSwap(false, true) {
 		return
 	}
 	if wait {
