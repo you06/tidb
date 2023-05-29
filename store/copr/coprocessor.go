@@ -268,6 +268,15 @@ type copTask struct {
 	requestSource  util.RequestSource
 	RowCountHint   int // used for extra concurrency of small tasks, -1 for unknown row count
 	batchTaskList  map[uint64]*batchedCopTask
+<<<<<<< HEAD
+=======
+
+	// when this task is batched and the leader's wait duration exceeds the load-based threshold,
+	// we set this field to the target replica store ID and redirect the request to the replica.
+	redirect2Replica *uint64
+	busyThreshold    time.Duration
+	meetLockFallback bool
+>>>>>>> 58150acb76 (disable stale read when meeting lock for cop)
 }
 
 type batchedCopTask struct {
@@ -1027,7 +1036,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	// set ReadReplicaScope and TxnScope so that req.IsStaleRead will be true when it's a global scope stale read.
 	req.ReadReplicaScope = worker.req.ReadReplicaScope
 	req.TxnScope = worker.req.TxnScope
-	if worker.req.IsStaleness {
+	if task.meetLockFallback {
+		req.DisableStaleReadMeetLock()
+	} else if worker.req.IsStaleness {
 		req.EnableStaleRead()
 	}
 	staleRead := req.GetStaleRead()
@@ -1177,7 +1188,12 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		if err := worker.handleLockErr(bo, lockErr, task); err != nil {
 			return nil, err
 		}
+<<<<<<< HEAD
 		return worker.handleBatchRemainsOnErr(bo, rpcCtx, []*copTask{task}, resp.pbResp.BatchResponses, task, ch)
+=======
+		task.meetLockFallback = true
+		return worker.handleBatchRemainsOnErr(bo, rpcCtx, []*copTask{task}, resp.pbResp, task, ch)
+>>>>>>> 58150acb76 (disable stale read when meeting lock for cop)
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
@@ -1325,7 +1341,12 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			if err := worker.handleLockErr(bo, resp.pbResp.GetLocked(), task); err != nil {
 				return nil, err
 			}
+<<<<<<< HEAD
 			remainTasks = append(remainTasks, task)
+=======
+			task.meetLockFallback = true
+			appendRemainTasks(task)
+>>>>>>> 58150acb76 (disable stale read when meeting lock for cop)
 			continue
 		}
 		if otherErr := batchResp.GetOtherError(); otherErr != "" {
