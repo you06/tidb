@@ -16,6 +16,7 @@ package expression
 
 import (
 	"context"
+	"github.com/tikv/client-go/v2/oracle"
 	"math"
 	"strings"
 	"time"
@@ -157,6 +158,13 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 		v := time.Unix(int64(val.(int)), 0)
 		failpoint.Return(v, nil)
 	})
+
+	if ctx != nil {
+		staleTSO, err := ctx.GetSessionVars().StmtCtx.GetStaleTSO()
+		if staleTSO != 0 && err != nil {
+			return oracle.GetTimeFromTS(staleTSO), nil
+		}
+	}
 
 	now := time.Now()
 
