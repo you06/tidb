@@ -20,6 +20,7 @@ package table
 
 import (
 	"context"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"time"
 
 	mysql "github.com/pingcap/tidb/errno"
@@ -119,6 +120,7 @@ type AddRecordOpt struct {
 	CreateIdxOpt
 	IsUpdate      bool
 	ReserveAutoID int
+	LocalVars     *LocalVars
 }
 
 // AddRecordOption is defined for the AddRecord() method of the Table interface.
@@ -147,6 +149,19 @@ type isUpdate struct{}
 
 func (i isUpdate) ApplyOn(opt *AddRecordOpt) {
 	opt.IsUpdate = true
+}
+
+// LocalVars works like thread local storage, which stores the local infos.
+type LocalVars struct {
+	N         int // N is the sharding number
+	WriteBufs *variable.WriteStmtBufs
+	// InsertTTLRowsCount counts how many rows are inserted in this statement
+	InsertTTLRowsCount int
+}
+
+// ApplyOn implements the AddRecordOption interface.
+func (l *LocalVars) ApplyOn(opt *AddRecordOpt) {
+	opt.LocalVars = l
 }
 
 type columnAPI interface {

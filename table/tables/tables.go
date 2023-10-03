@@ -892,6 +892,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		colIDs = recordCtx.colIDs[:0]
 		row = recordCtx.row[:0]
 	} else {
+		// TODO(you06): reuse the colIDs and row.
 		colIDs = make([]int64, 0, len(r))
 		row = make([]types.Datum, 0, len(r))
 	}

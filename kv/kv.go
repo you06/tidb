@@ -209,6 +209,7 @@ type Transaction interface {
 	RetrieverMutator
 	AssertionProto
 	FairLockingController
+	ParallelWriter
 	// Size returns sum of keys and values length.
 	Size() int
 	// Mem returns the memory consumption of the transaction.
@@ -294,6 +295,13 @@ type FairLockingController interface {
 	CancelFairLocking(ctx context.Context) error
 	DoneFairLocking(ctx context.Context) error
 	IsInFairLockingMode() bool
+}
+
+// ParallelWriter is used to write data to TiKV in parallel mode.
+type ParallelWriter interface {
+	ParallelInitWriter(concurrency int)
+	ParallelSet(n int, key []byte, value []byte) error
+	ParallelFlush() error
 }
 
 // Client is used to send request to KV layer.
