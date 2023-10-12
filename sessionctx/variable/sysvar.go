@@ -2930,6 +2930,11 @@ var defaultSysVars = []*SysVar{
 			SchemaVersionCacheLimit.Store(TidbOptInt64(val, DefTiDBSchemaVersionCacheLimit))
 			return nil
 		}},
+	{Scope: ScopeSession | ScopeGlobal, Name: TiDBEtlConcurrency, Value: strconv.Itoa(DefTiDBEtlConcurrency), Type: TypeInt, MinValue: 0, MaxValue: 65535,
+		SetSession: func(s *SessionVars, val string) error {
+			s.ETLConcurrency = TidbOptInt(val, DefTiDBEtlConcurrency)
+			return nil
+		}},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

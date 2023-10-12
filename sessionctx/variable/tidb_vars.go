@@ -1106,6 +1106,8 @@ const (
 	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
 	// It's deprecated and setting it will not have any effect.
 	TiDBEnableTiFlashPipelineMode = "tidb_enable_tiflash_pipeline_model"
+	// TiDBEtlConcurrency is the number of goroutines that can be used to perform ETL operations.
+	TiDBEtlConcurrency = "tidb_etl_concurrency"
 )
 
 // TiDB intentional limits
@@ -1417,6 +1419,7 @@ const (
 	DefTiDBOptEnableHashJoin                          = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
+	DefTiDBEtlConcurrency                             = 0
 )
 
 // Process global variables.

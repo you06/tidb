@@ -315,3 +315,5 @@ replace (
 )
 
 replace github.com/tikv/client-go/v2 => ../../tikv/client-go
+
+replace github.com/pingcap/kvproto => github.com/you06/kvproto v0.0.0-20231004012212-9326cb5cb243

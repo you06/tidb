@@ -18,7 +18,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/rowcodec"
+	"golang.org/x/sync/errgroup"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -443,6 +446,12 @@ func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) 
 
 func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	// process `insert|replace into ... select ... from ...`
+	sessVars := base.insertCommon().Ctx().GetSessionVars()
+	if etlConcurrency := sessVars.ETLConcurrency; etlConcurrency > 1 &&
+		!sessVars.InTxn() {
+		return insertRowsFromSelectParallel(ctx, base, etlConcurrency)
+	}
+
 	e := base.insertCommon()
 	selectExec := e.Children(0)
 	fields := exec.RetTypes(selectExec)
@@ -450,7 +459,6 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	iter := chunk.NewIterator4Chunk(chk)
 	rows := make([][]types.Datum, 0, chk.Capacity())
 
-	sessVars := e.Ctx().GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
 	memUsageOfRows := int64(0)
@@ -514,6 +522,158 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		memTracker.Consume(-memUsageOfExtraCols)
 		memTracker.Consume(-chkMemUsage)
 	}
+	return nil
+}
+
+type ParallelShardKeyType struct{}
+
+var ParallelShardKey ParallelShardKeyType
+
+func insertRowsFromSelectParallel(ctx context.Context, base insertCommon, concurrency int) (err error) {
+	e := base.insertCommon()
+	sessVar := e.Ctx().GetSessionVars()
+
+	if table, ok := e.Table.(*tables.TableCommon); ok {
+		logutil.Logger(ctx).Info("DBG init parallel writer",
+			zap.Int("table.Columns", len(table.Columns)),
+			zap.Int("table.PublicColumns", len(table.PublicColumns)))
+		parallelWriter, err := tables.NewParallelWriter(e.Ctx(), table, concurrency)
+		if err != nil {
+			return err
+		}
+		e.Table = parallelWriter
+	}
+
+	selectExec := e.Children(0)
+	fields := exec.RetTypes(selectExec)
+	//chk := exec.TryNewCacheChunk(selectExec)
+	//iter := chunk.NewIterator4Chunk(chk)
+	//rows := make([][]types.Datum, 0, chk.Capacity())
+	//extraColsInSel := make([][]types.Datum, 0, chk.Capacity())
+
+	//sessVars := e.Ctx().GetSessionVars()
+	memUsageOfRows := int64(0)
+	memUsageOfExtraCols := int64(0)
+	memTracker := e.memTracker
+
+	// In order to ensure the correctness of the `transaction write throughput` SLI statistics,
+	// just ignore the transaction which contain `insert|replace into ... select ... from ...` statement.
+	e.Ctx().GetTxnWriteThroughputSLI().SetInvalid()
+
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	var (
+		toWriteCh = make(chan *chunk.Chunk, concurrency)
+		toReadCh  = make(chan *chunk.Chunk, concurrency)
+		eg        *errgroup.Group
+		cancel    context.CancelFunc
+	)
+	defer func() {
+		close(toWriteCh)
+		close(toReadCh)
+		if err == nil {
+			if len(toWriteCh) != 0 {
+				panic("toWriteCh should be empty")
+			}
+		} else {
+			for range toWriteCh {
+			}
+		}
+		for range toReadCh {
+		}
+	}()
+
+	ctx, cancel = context.WithCancel(ctx)
+	eg, ctx = errgroup.WithContext(ctx)
+	for i := 0; i < concurrency; i++ {
+		ctx = context.WithValue(ctx, ParallelShardKey, &table.LocalVars{
+			N:         i,
+			WriteBufs: &variable.WriteStmtBufs{},
+			Encoder: &rowcodec.Encoder{
+				Enable: sessVar.RowEncoder.Enable,
+			},
+		})
+		eg.Go(func() error {
+			chk := exec.TryNewCacheChunk(selectExec)
+			iter := chunk.NewIterator4Chunk(chk)
+			rows := make([][]types.Datum, 0, chk.Capacity())
+			extraColsInSel := make([][]types.Datum, 0, chk.Capacity())
+
+			toReadCh <- chk // pass the chk to the read goroutine.
+			var ok bool
+			for {
+				select {
+				case chk, ok = <-toWriteCh:
+					if !ok {
+						return nil
+					}
+				case <-ctx.Done():
+					return nil
+				}
+
+				for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
+					innerRow := innerChunkRow.GetDatumRow(fields)
+					e.rowCount++
+					row, err := e.getRow(ctx, innerRow)
+					if err != nil {
+						return err
+					}
+					extraColsInSel = append(extraColsInSel, innerRow[e.rowLen:])
+					rows = append(rows, row)
+				}
+
+				if len(rows) != 0 {
+					memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
+					memUsageOfExtraCols = types.EstimatedMemUsage(extraColsInSel[0], len(extraColsInSel))
+					memTracker.Consume(memUsageOfRows + memUsageOfExtraCols)
+					e.Ctx().GetSessionVars().CurrInsertBatchExtraCols = extraColsInSel
+				}
+				err = base.exec(ctx, rows)
+				if err != nil {
+					return err
+				}
+				// clean the rows and extraColsInSel
+				rows = rows[:0]
+				extraColsInSel = extraColsInSel[:0]
+				// send the used chk back to the read goroutine.
+				toReadCh <- chk
+			}
+		})
+	}
+
+	var (
+		chk *chunk.Chunk
+		ok  bool
+	)
+	for {
+		chk, ok = <-toReadCh
+		if !ok {
+			logutil.Logger(ctx).Info("DBG break 1")
+			break
+		}
+		err := exec.Next(ctx, selectExec, chk)
+		if err != nil {
+			logutil.Logger(ctx).Info("DBG break 2")
+			cancel()
+			return err
+		}
+		if chk.NumRows() == 0 {
+			logutil.Logger(ctx).Info("DBG break 3")
+			//cancel()
+			break
+		}
+		toWriteCh <- chk
+		//chkMemUsage := chk.MemoryUsage()
+		//memTracker.Consume(chkMemUsage)
+		//
+		//memTracker.Consume(-memUsageOfRows)
+		//memTracker.Consume(-memUsageOfExtraCols)
+		//memTracker.Consume(-chkMemUsage)
+	}
+	if err = eg.Wait(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -1390,11 +1550,16 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 	if !vars.ConstraintCheckInPlace {
 		vars.PresumeKeyNotExists = true
 	}
+	opts := make([]table.AddRecordOption, 0, 3)
+	opts = append(opts, table.WithCtx(ctx))
 	if reserveAutoIDCount > 0 {
-		_, err = e.Table.AddRecord(e.Ctx(), row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
-	} else {
-		_, err = e.Table.AddRecord(e.Ctx(), row, table.WithCtx(ctx))
+		opts = append(opts, table.WithReserveAutoIDHint(reserveAutoIDCount))
 	}
+	shard, ok := ctx.Value(ParallelShardKey).(*table.LocalVars)
+	if ok {
+		opts = append(opts, shard)
+	}
+	_, err = e.Table.AddRecord(e.Ctx(), row, opts...)
 	vars.PresumeKeyNotExists = false
 	if err != nil {
 		return err

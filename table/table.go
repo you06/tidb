@@ -21,6 +21,7 @@ package table
 import (
 	"context"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"time"
 
 	mysql "github.com/pingcap/tidb/errno"
@@ -157,6 +158,7 @@ type LocalVars struct {
 	WriteBufs *variable.WriteStmtBufs
 	// InsertTTLRowsCount counts how many rows are inserted in this statement
 	InsertTTLRowsCount int
+	Encoder            *rowcodec.Encoder
 }
 
 // ApplyOn implements the AddRecordOption interface.

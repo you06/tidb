@@ -46,7 +46,7 @@ type ParallelTable struct {
 }
 
 func NewParallelWriter(sctx sessionctx.Context, tbl *TableCommon, concurrency int) (*ParallelTable, error) {
-	if m := tbl.Meta(); m.TempTableType == model.TempTableNone {
+	if m := tbl.Meta(); m.TempTableType != model.TempTableNone {
 		return nil, errors.New("ParallelTable does not support temporary table")
 	}
 	txn, err := sctx.Txn(true)
@@ -234,8 +234,10 @@ func (p *ParallelTable) AddRecord(sctx sessionctx.Context, r []types.Datum, opts
 	key := p.RecordKey(recordID)
 	logutil.BgLogger().Debug("addRecord",
 		zap.Stringer("key", key))
-	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
+	sc, rd := sessVars.StmtCtx, opt.LocalVars.Encoder
 	checksums, writeBufs.RowValBuf = p.calcChecksums(sctx, recordID, checksumData, writeBufs.RowValBuf)
+	logutil.Logger(ctx).Info("DBG before encode",
+		zap.Int("colIDs", len(colIDs)))
 	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
 	if err != nil {
 		return nil, err
