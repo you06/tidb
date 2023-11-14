@@ -1702,7 +1702,9 @@ func upgradeToVer32(s Session, ver int64) {
 
 	// Set optimistic to tidb_tx_mode.
 	// Related issue: https://github.com/pingcap/tidb/issues/48492
-	variable.SetSysVar(variable.TiDBTxnMode, variable.OptimisticTxnMode)
+	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES('%s', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE = '%s'",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBTxnMode, variable.OptimisticTxnMode, variable.OptimisticTxnMode)
+	mustExecute(s, sql)
 }
 
 func upgradeToVer33(s Session, ver int64) {
@@ -1756,9 +1758,9 @@ func upgradeToVer38(s Session, ver int64) {
 
 	// Set optimistic to tidb_tx_mode.
 	// Related issue: https://github.com/pingcap/tidb/issues/48492
-	if variable.GetSysVar(variable.TiDBTxnMode).Value == "" {
-		variable.SetSysVar(variable.TiDBTxnMode, variable.OptimisticTxnMode)
-	}
+	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %s.%s SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = '%s' AND VARIABLE_VALUE = ''",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.OptimisticTxnMode, variable.TiDBTxnMode, variable.OptimisticTxnMode)
+	mustExecute(s, sql)
 }
 
 func writeNewCollationParameter(s Session, flag bool) {
