@@ -1758,12 +1758,12 @@ func upgradeToVer38(s Session, ver int64) {
 
 	// Set optimistic to tidb_tx_mode.
 	// Related issue: https://github.com/pingcap/tidb/issues/48492
-	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %s.%s SET VARIABLE_VALUE = '%s' WHERE VARIABLE_NAME = '%s' AND VARIABLE_VALUE = ''",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.OptimisticTxnMode, variable.TiDBTxnMode)
-	if val, ok := s.GetSessionVars().GetSystemVar(variable.TiDBTxnMode); !ok || val == "" {
-		sql = fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES('%s', '%s')",
-			mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBTxnMode, variable.OptimisticTxnMode)
-	}
+
+	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s ("+
+		"SELECT '%s', '%s' WHERE NOT EXISTS (SELECT * FROM %s.%s WHERE VARIABLE_NAME = '%s' AND VARIABLE_VALUE = '%s')"+
+		")ON DUPLICATE KEY UPDATE VARIABLE_VALUE = VALUES(VARIABLE_VALUE)",
+		mysql.SystemDB, mysql.GlobalVariablesTable,
+		variable.TiDBTxnMode, variable.OptimisticTxnMode, mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBTxnMode, variable.PessimisticTxnMode)
 	mustExecute(s, sql)
 }
 
