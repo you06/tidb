@@ -1726,7 +1726,6 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 		}
 		return t.allocs
 	}
-
 	// Replace the row id allocator with the one in session variables.
 	sessAlloc := ctx.GetSessionVars().IDAllocator
 	allocs := t.allocs.Allocs

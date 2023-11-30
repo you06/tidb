@@ -254,7 +254,7 @@ func (c *Context) GetSessionPlanCache() sessionctx.PlanCache {
 }
 
 // NewTxn implements the sessionctx.Context interface.
-func (c *Context) NewTxn(context.Context) error {
+func (c *Context) NewTxn(ctx context.Context) error {
 	if c.Store == nil {
 		return errors.New("store is not set")
 	}
@@ -268,6 +268,9 @@ func (c *Context) NewTxn(context.Context) error {
 	txn, err := c.Store.Begin()
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if ctx.Value("dropKVMemBuffer") != nil {
+		txn = &DropValueTxn{txn}
 	}
 	c.txn.Transaction = txn
 	return nil
@@ -488,3 +491,39 @@ func NewContext() *Context {
 // HookKeyForTest is as alias, used by context.WithValue.
 // golint forbits using string type as key in context.WithValue.
 type HookKeyForTest string
+
+type DropValueTxn struct {
+	kv.Transaction
+}
+
+func (d *DropValueTxn) GetMemBuffer() kv.MemBuffer {
+	buffer := d.Transaction.GetMemBuffer()
+	return &DummyMemBuffer{buffer}
+}
+
+func (d *DropValueTxn) SetAssertion([]byte, ...kv.FlagsOp) error { return nil }
+
+type DummyMemBuffer struct {
+	kv.MemBuffer
+}
+
+// Set sets the value for key k as v into kv store.
+// v must NOT be nil or empty, otherwise it returns ErrCannotSetNilValue.
+func (d *DummyMemBuffer) Set(kv.Key, []byte) error { return nil }
+func (d *DropValueTxn) Set(kv.Key, []byte) error   { return nil }
+
+// Delete removes the entry for key k from kv store.
+func (d *DummyMemBuffer) Delete(kv.Key) error { return nil }
+func (d *DropValueTxn) Delete(kv.Key) error   { return nil }
+
+// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
+func (d *DummyMemBuffer) SetWithFlags(kv.Key, []byte, ...kv.FlagsOp) error { return nil }
+func (d *DropValueTxn) SetWithFlags(kv.Key, []byte, ...kv.FlagsOp) error   { return nil }
+
+// UpdateFlags updates the flags associated with key.
+func (d *DummyMemBuffer) UpdateFlags(kv.Key, ...kv.FlagsOp) {}
+func (d *DropValueTxn) UpdateFlags(kv.Key, ...kv.FlagsOp)   {}
+
+// DeleteWithFlags delete key with the given KeyFlags
+func (d *DummyMemBuffer) DeleteWithFlags(kv.Key, ...kv.FlagsOp) error { return nil }
+func (d *DropValueTxn) DeleteWithFlags(kv.Key, ...kv.FlagsOp) error   { return nil }
