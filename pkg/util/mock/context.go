@@ -269,8 +269,12 @@ func (c *Context) NewTxn(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if ctx.Value("dropKVMemBuffer") != nil {
-		txn = &DropValueTxn{txn}
+	if val := ctx.Value("dropKVMemBuffer"); val != nil {
+		if val.(string) == "key" {
+			txn = &DropKeyTxn{txn}
+		} else if val.(string) == "value" {
+			txn = &DropValueTxn{txn}
+		}
 	}
 	c.txn.Transaction = txn
 	return nil
@@ -492,38 +496,71 @@ func NewContext() *Context {
 // golint forbits using string type as key in context.WithValue.
 type HookKeyForTest string
 
+type DropKeyTxn struct {
+	kv.Transaction
+}
+
+func (d *DropKeyTxn) GetMemBuffer() kv.MemBuffer {
+	buffer := d.Transaction.GetMemBuffer()
+	return &DropKeyMemBuffer{buffer}
+}
+
+func (d *DropKeyTxn) SetAssertion([]byte, ...kv.FlagsOp) error { return nil }
+
+type DropKeyMemBuffer struct {
+	kv.MemBuffer
+}
+
+// Set sets the value for key k as v into kv store.
+// v must NOT be nil or empty, otherwise it returns ErrCannotSetNilValue.
+func (d *DropKeyMemBuffer) Set(kv.Key, []byte) error { return nil }
+func (d *DropKeyTxn) Set(kv.Key, []byte) error       { return nil }
+
+// Delete removes the entry for key k from kv store.
+func (d *DropKeyMemBuffer) Delete(kv.Key) error { return nil }
+func (d *DropKeyTxn) Delete(kv.Key) error       { return nil }
+
+// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
+func (d *DropKeyMemBuffer) SetWithFlags(kv.Key, []byte, ...kv.FlagsOp) error { return nil }
+func (d *DropKeyTxn) SetWithFlags(kv.Key, []byte, ...kv.FlagsOp) error       { return nil }
+
+// UpdateFlags updates the flags associated with key.
+func (d *DropKeyMemBuffer) UpdateFlags(kv.Key, ...kv.FlagsOp) {}
+func (d *DropKeyTxn) UpdateFlags(kv.Key, ...kv.FlagsOp)       {}
+
+// DeleteWithFlags delete key with the given KeyFlags
+func (d *DropKeyMemBuffer) DeleteWithFlags(kv.Key, ...kv.FlagsOp) error { return nil }
+func (d *DropKeyTxn) DeleteWithFlags(kv.Key, ...kv.FlagsOp) error       { return nil }
+
 type DropValueTxn struct {
 	kv.Transaction
 }
 
 func (d *DropValueTxn) GetMemBuffer() kv.MemBuffer {
 	buffer := d.Transaction.GetMemBuffer()
-	return &DummyMemBuffer{buffer}
+	return &DropValueMemBuffer{buffer}
 }
 
 func (d *DropValueTxn) SetAssertion([]byte, ...kv.FlagsOp) error { return nil }
 
-type DummyMemBuffer struct {
+type DropValueMemBuffer struct {
 	kv.MemBuffer
 }
 
 // Set sets the value for key k as v into kv store.
 // v must NOT be nil or empty, otherwise it returns ErrCannotSetNilValue.
-func (d *DummyMemBuffer) Set(kv.Key, []byte) error { return nil }
-func (d *DropValueTxn) Set(kv.Key, []byte) error   { return nil }
-
-// Delete removes the entry for key k from kv store.
-func (d *DummyMemBuffer) Delete(kv.Key) error { return nil }
-func (d *DropValueTxn) Delete(kv.Key) error   { return nil }
+func (d *DropValueMemBuffer) Set(k kv.Key, _ []byte) error { return d.Delete(k) }
+func (d *DropValueTxn) Set(k kv.Key, _ []byte) error       { return d.Delete(k) }
 
 // SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
-func (d *DummyMemBuffer) SetWithFlags(kv.Key, []byte, ...kv.FlagsOp) error { return nil }
-func (d *DropValueTxn) SetWithFlags(kv.Key, []byte, ...kv.FlagsOp) error   { return nil }
+func (d *DropValueMemBuffer) SetWithFlags(k kv.Key, _ []byte, flags ...kv.FlagsOp) error {
+	d.UpdateFlags(k, flags...)
+	return nil
+}
+func (d *DropValueTxn) SetWithFlags(k kv.Key, _ []byte, flags ...kv.FlagsOp) error {
+	d.UpdateFlags(k, flags...)
+	return nil
+}
 
 // UpdateFlags updates the flags associated with key.
-func (d *DummyMemBuffer) UpdateFlags(kv.Key, ...kv.FlagsOp) {}
-func (d *DropValueTxn) UpdateFlags(kv.Key, ...kv.FlagsOp)   {}
-
-// DeleteWithFlags delete key with the given KeyFlags
-func (d *DummyMemBuffer) DeleteWithFlags(kv.Key, ...kv.FlagsOp) error { return nil }
-func (d *DropValueTxn) DeleteWithFlags(kv.Key, ...kv.FlagsOp) error   { return nil }
+func (d *DropValueTxn) UpdateFlags(k kv.Key, flags ...kv.FlagsOp) { d.UpdateFlags(k, flags...) }
