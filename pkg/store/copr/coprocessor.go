@@ -829,8 +829,12 @@ func (b *copTaskBuilder) buildTasks(handle func(task *copTask) bool) error {
 				return err
 			}
 			for _, task := range tasks {
-				if !handle(task) {
-					return finCopBuild
+				if handle != nil {
+					if !handle(task) {
+						return finCopBuild
+					}
+				} else {
+					b.builtTasks = append(b.builtTasks, task)
 				}
 			}
 			return nil
