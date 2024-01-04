@@ -18,7 +18,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -41,11 +40,6 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	killed := uint32(0)
 	vars := kv.NewVariables(&killed)
 	opt := &kv.ClientSendOption{}
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/disableTryLoadRegion", "return"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/disableTryLoadRegion"))
-	}()
 
 	ranges := copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
 	req := &kv.Request{
@@ -115,6 +109,6 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	tasks, err = it.GetTaskBuilder().Drain()
 	require.Nil(t, err)
 	require.Equal(t, len(tasks), 2)
-	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 0)
-	require.Equal(t, len(tasks[1].ToPBBatchTasks()), 1) // batched tasks will be flushed in the end.
+	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 1)
+	require.Equal(t, len(tasks[1].ToPBBatchTasks()), 0)
 }

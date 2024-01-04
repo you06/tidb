@@ -817,9 +817,6 @@ func (b *copTaskBuilder) buildTasks(handle func(task *copTask) bool) error {
 		return nil
 	}
 	req := b.req
-	failpoint.Inject("disableTryLoadRegion", func(_ failpoint.Value) {
-		b.opt.readCache = false
-	})
 	b.opt.handle = handle
 	// Here we build the task by partition, not directly by region.
 	// This is because it's possible that TiDB merge multiple small partition into one region which break some assumption.
