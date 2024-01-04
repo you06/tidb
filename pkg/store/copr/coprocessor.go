@@ -992,10 +992,7 @@ func (b *copTaskBuilder) Build() error {
 	if b.builtTasks != nil {
 		return errors.New("cop tasks are already built")
 	}
-	if err := b.buildTasks(nil); err != nil {
-		return err
-	}
-	return nil
+	return b.buildTasks(nil)
 }
 
 // CopInfo is used to expose functions of copIterator.
