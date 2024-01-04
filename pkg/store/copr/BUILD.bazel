@@ -39,6 +39,7 @@ go_library(
         "//pkg/util/paging",
         "//pkg/util/tiflash",
         "//pkg/util/tiflashcompute",
+        "//pkg/util/tracing",
         "//pkg/util/trxevents",
         "@com_github_dgraph_io_ristretto//:ristretto",
         "@com_github_gogo_protobuf//proto",
