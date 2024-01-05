@@ -1454,7 +1454,7 @@ const (
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0
 	DefTiDBTxnEntrySizeLimit                          = 0
-	DefTiDBDistSQLParallelBuild                       = false
+	DefTiDBDistSQLParallelBuild                       = true
 )
 
 // Process global variables.
