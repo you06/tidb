@@ -871,7 +871,7 @@ func (b *copTaskBuilder) buildTasksForRanges(ranges *KeyRanges, hints []int, opt
 			respChan:                    opt.respChan,
 			rowHints:                    hints,
 			elapsed:                     nil,
-			ignoreTiKVClientReadTimeout: false,
+			ignoreTiKVClientReadTimeout: opt.ignoreTiKVClientReadTimeout,
 		}
 		tasks, err := buildCopTasksV1(b.bo, ranges, optV1)
 		b.elapsed.Add(int64(time.Since(start)))
