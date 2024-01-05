@@ -157,7 +157,6 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 }
 
 func TestMemTracker4DeleteExec(t *testing.T) {
-	t.Skip()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
