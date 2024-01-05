@@ -79,12 +79,11 @@ go_test(
         "key_ranges_test.go",
         "main_test.go",
         "mpp_probe_test.go",
-        "region_cache_test.go",
     ],
     embed = [":copr"],
     flaky = True,
     race = "on",
-    shard_count = 29,
+    shard_count = 28,
     deps = [
         "//pkg/kv",
         "//pkg/store/driver/backoff",
