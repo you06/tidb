@@ -1208,7 +1208,10 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 	}
 
 	// May make the pool in the store.
-	pool, err := spool.NewPool(fmt.Sprintf("coprocessor-%d", poolID.Add(1)), int32(it.concurrency+it.smallTaskConcurrency), resourcemanager_util.COPROCESSOR)
+	pool, err := spool.NewPool(fmt.Sprintf("coprocessor-%d", poolID.Add(1)),
+		int32(it.concurrency+it.smallTaskConcurrency),
+		resourcemanager_util.Coprocessor,
+		spool.WithIgnoreMetric(true))
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -1285,9 +1288,9 @@ func (sender *copIteratorTaskSender) run(connID uint64) {
 	if keepOrder {
 		close(sender.tasks)
 	}
-	sender.taskHandler.Close(true)
+	sender.taskHandler.Close(false)
 	if sender.smallTaskHandler != nil {
-		sender.smallTaskHandler.Close(true)
+		sender.smallTaskHandler.Close(false)
 	}
 	// Wait for all worker done.
 	sender.pool.ReleaseAndWait()

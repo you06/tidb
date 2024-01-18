@@ -33,7 +33,7 @@ func NewCPUScheduler() *CPUScheduler {
 func (*CPUScheduler) Tune(component util.Component, pool util.GoroutinePool) Command {
 	switch component {
 	// ignore tuning some components.
-	case util.COPROCESSOR:
+	case util.Coprocessor:
 		return Hold
 	default:
 	}

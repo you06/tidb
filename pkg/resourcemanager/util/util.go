@@ -59,6 +59,6 @@ const (
 	CheckTable
 	// ImportInto is for import into component.
 	ImportInto
-	// COPROCESSOR is for handling coprocessor tasks.
-	COPROCESSOR
+	// Coprocessor is for handling coprocessor tasks.
+	Coprocessor
 )

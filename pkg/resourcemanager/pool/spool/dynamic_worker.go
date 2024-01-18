@@ -16,7 +16,6 @@ package spool
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool"
@@ -51,7 +50,6 @@ func RunWithDynamicalConcurrency[T any, W Worker[T]](ctx context.Context, p *Poo
 		taskCh:   make(chan T, concurrency),
 		create:   create,
 	}
-	handle.volume.Store(conc)
 	for n := int32(0); n < conc; n++ {
 		p.run(handle.run)
 	}
@@ -69,49 +67,33 @@ type DynamicConcurrencyHandle[T any, W Worker[T]] struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	running  atomic.Int32
-	volume   atomic.Int32
 	capacity int32
 	taskID   uint64
 	p        *Pool
 	taskCh   chan T
 	create   func() W
-	wg       sync.WaitGroup
 }
 
-// Send a function to the pool, spawn new worker if required.
+// Send a task to the pool, spawn new worker if required.
 func (d *DynamicConcurrencyHandle[T, W]) Send(task T) {
 	trySpawn := len(d.taskCh) > 0 || d.running.Load() == 0
 	d.taskCh <- task
-	if trySpawn {
-		volume := d.volume.Load()
-		swapped := false
-		for {
-			if volume+1 > d.capacity {
-				break
-			}
-			swapped = d.volume.CompareAndSwap(volume, volume+1)
-			if swapped {
-				break
-			}
-			volume = d.volume.Load()
-		}
-		if swapped {
-			// spawn new runner.
-			d.wg.Add(1)
-			d.p.run(d.run)
-		}
+	if trySpawn && d.p.Running() < d.capacity {
+		// spawn new runner.
+		d.p.run(d.run)
 	}
 }
 
-// Close stop the tasks, if not wait, the queued tasks will be dropped.
-func (d *DynamicConcurrencyHandle[T, W]) Close(wait bool) {
+// Close stop the tasks, if cancel is true, the queued tasks will be dropped.
+func (d *DynamicConcurrencyHandle[T, W]) Close(cancel bool) {
 	close(d.taskCh)
-	if !wait {
+	if cancel {
 		d.cancel()
 	}
 }
 
 func (d *DynamicConcurrencyHandle[T, W]) run() {
+	d.p.running.Add(1)
 	worker := d.create()
 	defer worker.Close()
 	for {
@@ -137,5 +119,5 @@ func (d *DynamicConcurrencyHandle[T, W]) Volume() int {
 	if d == nil {
 		return 0
 	}
-	return int(d.volume.Load())
+	return int(d.p.Running())
 }

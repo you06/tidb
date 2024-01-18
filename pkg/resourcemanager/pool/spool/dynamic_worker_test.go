@@ -16,10 +16,9 @@ package spool
 
 import (
 	"context"
-	"testing"
-
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/stretchr/testify/require"
+	"testing"
 )
 
 type DummyIntWorker struct {
@@ -49,7 +48,9 @@ func TestDynamicConcurrencyOneshot(t *testing.T) {
 	require.NoError(t, err)
 	handle.Send(1)
 	require.Equal(t, 1, <-receive)
-	handle.Close(true)
+	handle.Close(false)
+	p.wg.Wait()
+	require.Zero(t, p.Running())
 }
 
 func TestDynamicConcurrencyMultiTask(t *testing.T) {
@@ -67,7 +68,7 @@ func TestDynamicConcurrencyMultiTask(t *testing.T) {
 		results[i] = struct{}{}
 		handle.Send(i)
 	}
-	handle.Close(true)
+	handle.Close(false)
 	for i := 0; i < 100; i++ {
 		r, ok := <-receive
 		require.True(t, ok)
@@ -77,4 +78,6 @@ func TestDynamicConcurrencyMultiTask(t *testing.T) {
 	}
 	require.Len(t, receive, 0)
 	close(receive)
+	p.wg.Wait()
+	require.Zero(t, p.Running())
 }
