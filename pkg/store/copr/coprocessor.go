@@ -852,7 +852,7 @@ func (b *copTaskBuilder) buildTasks(handle func(task *copTask) bool) error {
 		}
 		return nil
 	})
-	if err == finCopBuild {
+	if errors.ErrorEqual(err, finCopBuild) {
 		return nil
 	} else if err != nil {
 		b.err.Store(&err)
@@ -1226,12 +1226,20 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 		taskBuilder: it.taskBuilder,
 	}
 
-	taskSender.taskHandler, err = spool.RunWithDynamicalConcurrency[*copTask, *copIteratorWorker](ctx, pool, create, 1, uint32(it.concurrency))
+	if len(it.taskBuilder.builtTasks) > 0 {
+		taskSender.taskHandler, err = spool.RunWithDynamicalConcurrency[*copTask, *copIteratorWorker](ctx, pool, create, uint32(it.concurrency), uint32(it.concurrency))
+	} else {
+		taskSender.taskHandler, err = spool.RunWithDynamicalConcurrency[*copTask, *copIteratorWorker](ctx, pool, create, 1, uint32(it.concurrency))
+	}
 	if err != nil {
 		return copErrorResponse{err}
 	}
 	if it.smallTaskConcurrency > 0 {
-		taskSender.smallTaskHandler, err = spool.RunWithDynamicalConcurrency[*copTask, *copIteratorWorker](ctx, pool, create, 1, uint32(it.smallTaskConcurrency))
+		if len(it.taskBuilder.builtTasks) > 0 {
+			taskSender.smallTaskHandler, err = spool.RunWithDynamicalConcurrency[*copTask, *copIteratorWorker](ctx, pool, create, uint32(it.smallTaskConcurrency), uint32(it.smallTaskConcurrency))
+		} else {
+			taskSender.smallTaskHandler, err = spool.RunWithDynamicalConcurrency[*copTask, *copIteratorWorker](ctx, pool, create, 1, uint32(it.smallTaskConcurrency))
+		}
 		if err != nil {
 			return copErrorResponse{err}
 		}
