@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tiancaiamao/gp"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -840,6 +841,8 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 	}
 }
 
+var gpool = gp.New(math.MaxInt16, 30*time.Second)
+
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool) {
 	taskCh := make(chan *copTask, 1)
@@ -871,7 +874,9 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			storeBatchedFallbackNum:    &it.storeBatchedFallbackNum,
 			unconsumedStats:            it.unconsumedStats,
 		}
-		go worker.run(ctx)
+		gpool.Go(func() {
+			worker.run(ctx)
+		})
 	}
 	taskSender := &copIteratorTaskSender{
 		taskCh:      taskCh,
