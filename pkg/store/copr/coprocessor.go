@@ -820,6 +820,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		})
 		worker.wg.Done()
 	}()
+	ballast := make([]byte, 32<<10) // 32KB ballast
 	for task := range worker.taskCh {
 		respCh := worker.respChan
 		if respCh == nil {
@@ -838,6 +839,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			return
 		}
 	}
+	_ = ballast
 }
 
 // open starts workers and sender goroutines.
