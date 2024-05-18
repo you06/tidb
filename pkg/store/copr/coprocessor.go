@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -820,6 +821,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		})
 		worker.wg.Done()
 	}()
+	ballast := make([]byte, 64<<10) // allocate 64KB ballast memory
 	for task := range worker.taskCh {
 		respCh := worker.respChan
 		if respCh == nil {
@@ -838,6 +840,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			return
 		}
 	}
+	runtime.KeepAlive(ballast)
 }
 
 // open starts workers and sender goroutines.
