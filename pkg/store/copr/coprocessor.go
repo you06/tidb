@@ -821,7 +821,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		})
 		worker.wg.Done()
 	}()
-	ballast := make([]byte, 32<<10) // allocate 32KB ballast memory
+	ballast := make([]byte, 128<<10) // allocate 128KB ballast memory
 	for task := range worker.taskCh {
 		respCh := worker.respChan
 		if respCh == nil {
