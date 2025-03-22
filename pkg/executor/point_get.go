@@ -37,9 +37,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"go.uber.org/zap"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Executor {
@@ -449,6 +451,7 @@ func (e *PointGetExecutor) getValueFromLockCtx(ctx context.Context,
 // then the store. Kv.ErrNotExist will be returned if key is not found
 func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) {
 	if len(key) == 0 {
+		logutil.Logger(ctx).Error("key is empty")
 		return nil, kv.ErrNotExist
 	}
 
@@ -456,6 +459,10 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		val []byte
 		err error
 	)
+
+	defer func() {
+		logutil.Logger(ctx).Info("point get", zap.Stringer("key", key), zap.ByteString("value", val), zap.Error(err))
+	}()
 
 	if e.txn.Valid() && !e.txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
