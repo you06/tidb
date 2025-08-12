@@ -263,8 +263,8 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		// } else {
 		// 	skipLock = !distinct || skipCheck || untouched
 		// }
-		skipLock := skipCheck || untouched
-		if skipLock {
+		// skipLock := skipCheck || untouched
+		if !distinct || skipCheck || untouched {
 			val := idxVal
 			if untouched && hasTempKey {
 				// Untouched key-values never occur in the storage and the temp index is not public.
@@ -281,9 +281,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				// Here may have the situation:
 				// DML: Writing the normal index key.
 				// DDL: Writing the same normal index key, but it does not lock primary record.
+				// 	err = txn.GetMemBuffer().SetWithFlags(key, val, kv.SetNeedLocked)
+				// } else {
 				err = txn.GetMemBuffer().SetWithFlags(key, val, kv.SetNeedLocked)
-			} else {
-				err = txn.GetMemBuffer().Set(key, val)
 			}
 			if err != nil {
 				return nil, err
