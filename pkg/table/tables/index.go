@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/tikv/client-go/v2/config"
 )
 
 // index is the data structure for index data in the KV store.
@@ -256,7 +257,13 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 
 		ignoreAssertion := opt.IgnoreAssertion() || c.idxInfo.State != model.StatePublic
 
-		if !distinct || skipCheck || untouched {
+		var skipLock bool
+		if config.NextGen {
+			skipLock = skipCheck || untouched
+		} else {
+			skipLock = !distinct || skipCheck || untouched
+		}
+		if skipLock {
 			val := idxVal
 			if untouched && hasTempKey {
 				// Untouched key-values never occur in the storage and the temp index is not public.
@@ -454,7 +461,14 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 			tempValElem.Global = true
 			tempValElem.Handle = kv.NewPartitionHandle(c.phyTblID, h)
 		}
-		if distinct {
+		var skipLock bool
+		if config.NextGen {
+			skipLock = false
+		} else {
+			// skipLock = !distinct
+			skipLock = false
+		}
+		if !skipLock {
 			if len(key) > 0 {
 				okToDelete := true
 				if c.idxInfo.BackfillState != model.BackfillStateInapplicable {
