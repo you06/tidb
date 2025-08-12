@@ -277,12 +277,13 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				// during some step of add-index, such as in write-reorg state, this
 				// key is THE temp index key.
 				err = txn.GetMemBuffer().Set(key, val)
-			} else if c.mayDDLMergingTempIndex() {
+				// } else if c.mayDDLMergingTempIndex() {
 				// Here may have the situation:
 				// DML: Writing the normal index key.
 				// DDL: Writing the same normal index key, but it does not lock primary record.
 				// 	err = txn.GetMemBuffer().SetWithFlags(key, val, kv.SetNeedLocked)
-				// } else {
+			} else {
+				// err = txn.GetMemBuffer().Set(key, val)
 				err = txn.GetMemBuffer().SetWithFlags(key, val, kv.SetNeedLocked)
 			}
 			if err != nil {
