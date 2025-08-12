@@ -502,15 +502,15 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 			}
 		} else {
 			if len(key) > 0 {
-				if c.mayDDLMergingTempIndex() {
-					// Here may have the situation:
-					// DML: Deleting the normal index key.
-					// DDL: Writing the same normal index key, but it does not lock primary record.
-					// In this case, we should lock the index key in DML to grantee the serialization.
-					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
-				} else {
-					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
-				}
+				// if c.mayDDLMergingTempIndex() {
+				// 	// Here may have the situation:
+				// 	// DML: Deleting the normal index key.
+				// 	// DDL: Writing the same normal index key, but it does not lock primary record.
+				// 	// In this case, we should lock the index key in DML to grantee the serialization.
+				// 	err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+				// } else {
+				// }
+				err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
 				if err != nil {
 					return err
 				}
