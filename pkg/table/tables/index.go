@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/tikv/client-go/v2/config"
 )
 
 // index is the data structure for index data in the KV store.
@@ -258,12 +257,13 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		ignoreAssertion := opt.IgnoreAssertion() || c.idxInfo.State != model.StatePublic
 
 		// skipLock := !distinct || skipCheck || untouched
-		var skipLock bool
-		if config.NextGen {
-			skipLock = skipCheck || untouched
-		} else {
-			skipLock = !distinct || skipCheck || untouched
-		}
+		// var skipLock bool
+		// if config.NextGen {
+		// 	skipLock = skipCheck || untouched
+		// } else {
+		// 	skipLock = !distinct || skipCheck || untouched
+		// }
+		skipLock := skipCheck || untouched
 		if skipLock {
 			val := idxVal
 			if untouched && hasTempKey {
@@ -509,12 +509,7 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 					// In this case, we should lock the index key in DML to grantee the serialization.
 					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
 				} else {
-					if config.NextGen {
-						err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
-					} else {
-						// err = txn.GetMemBuffer().Delete(key)
-						err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
-					}
+					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
 				}
 				if err != nil {
 					return err
