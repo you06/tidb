@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/tikv/client-go/v2/config"
 )
 
 // index is the data structure for index data in the KV store.
@@ -256,12 +257,13 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 
 		ignoreAssertion := opt.IgnoreAssertion() || c.idxInfo.State != model.StatePublic
 
-		skipLock := skipCheck || untouched
-		// if config.NextGen {
-		// 	skipLock = skipCheck || untouched
-		// } else {
-		// 	skipLock = !distinct || skipCheck || untouched
-		// }
+		// skipLock := !distinct || skipCheck || untouched
+		var skipLock bool
+		if config.NextGen {
+			skipLock = skipCheck || untouched
+		} else {
+			skipLock = !distinct || skipCheck || untouched
+		}
 		if skipLock {
 			val := idxVal
 			if untouched && hasTempKey {
@@ -461,66 +463,72 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 			tempValElem.Handle = kv.NewPartitionHandle(c.phyTblID, h)
 		}
 
-		if len(key) > 0 {
-			okToDelete := true
-			if c.idxInfo.BackfillState != model.BackfillStateInapplicable {
-				// #52914: the delete key is covered by the new ingested key, which shouldn't be deleted.
-				originVal, err := getKeyInTxn(context.TODO(), txn, key)
-				if err != nil {
-					return err
-				}
-				if len(originVal) > 0 {
-					oh, err := tablecodec.DecodeHandleInIndexValue(originVal)
+		if distinct {
+			if len(key) > 0 {
+				okToDelete := true
+				if c.idxInfo.BackfillState != model.BackfillStateInapplicable {
+					// #52914: the delete key is covered by the new ingested key, which shouldn't be deleted.
+					originVal, err := getKeyInTxn(context.TODO(), txn, key)
 					if err != nil {
 						return err
 					}
-					// The handle passed in may be a `PartitionHandle`,
-					// so we can't directly do comparation with them.
-					if !h.Equal(oh) {
-						okToDelete = false
+					if len(originVal) > 0 {
+						oh, err := tablecodec.DecodeHandleInIndexValue(originVal)
+						if err != nil {
+							return err
+						}
+						// The handle passed in may be a `PartitionHandle`,
+						// so we can't directly do comparation with them.
+						if !h.Equal(oh) {
+							okToDelete = false
+						}
+					}
+				}
+				if okToDelete {
+					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+					if err != nil {
+						return err
 					}
 				}
 			}
-			if okToDelete {
-				err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+			if len(tempKey) > 0 {
+				// Append to the end of the origin value for distinct value.
+				tempVal := tempValElem.Encode(originTempVal)
+				err = txn.GetMemBuffer().Set(tempKey, tempVal)
+				if err != nil {
+					return err
+				}
+				metrics.DDLAddOneTempIndexWrite(ctx.ConnectionID(), c.tblInfo.ID, doubleWrite)
+			}
+		} else {
+			if len(key) > 0 {
+				if c.mayDDLMergingTempIndex() {
+					// Here may have the situation:
+					// DML: Deleting the normal index key.
+					// DDL: Writing the same normal index key, but it does not lock primary record.
+					// In this case, we should lock the index key in DML to grantee the serialization.
+					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+				} else {
+					if config.NextGen {
+						err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+					} else {
+						// err = txn.GetMemBuffer().Delete(key)
+						err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+					}
+				}
 				if err != nil {
 					return err
 				}
 			}
-		}
-		if len(tempKey) > 0 {
-			// Append to the end of the origin value for distinct value.
-			tempVal := tempValElem.Encode(originTempVal)
-			err = txn.GetMemBuffer().Set(tempKey, tempVal)
-			if err != nil {
-				return err
+			if len(tempKey) > 0 {
+				tempVal := tempValElem.Encode(nil)
+				err = txn.GetMemBuffer().Set(tempKey, tempVal)
+				if err != nil {
+					return err
+				}
+				metrics.DDLAddOneTempIndexWrite(ctx.ConnectionID(), c.tblInfo.ID, doubleWrite)
 			}
-			metrics.DDLAddOneTempIndexWrite(ctx.ConnectionID(), c.tblInfo.ID, doubleWrite)
 		}
-		// } else {
-		// 	if len(key) > 0 {
-		// 		if c.mayDDLMergingTempIndex() {
-		// 			// Here may have the situation:
-		// 			// DML: Deleting the normal index key.
-		// 			// DDL: Writing the same normal index key, but it does not lock primary record.
-		// 			// In this case, we should lock the index key in DML to grantee the serialization.
-		// 			err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
-		// 		} else {
-		// 			err = txn.GetMemBuffer().Delete(key)
-		// 		}
-		// 		if err != nil {
-		// 			return err
-		// 		}
-		// 	}
-		// 	if len(tempKey) > 0 {
-		// 		tempVal := tempValElem.Encode(nil)
-		// 		err = txn.GetMemBuffer().Set(tempKey, tempVal)
-		// 		if err != nil {
-		// 			return err
-		// 		}
-		// 		metrics.DDLAddOneTempIndexWrite(ctx.ConnectionID(), c.tblInfo.ID, doubleWrite)
-		// 	}
-		// }
 		if c.idxInfo.State == model.StatePublic {
 			// If the index is in public state, delete this index means it must exists.
 			err = txn.SetAssertion(key, kv.SetAssertExist)
