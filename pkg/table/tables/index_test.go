@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/config"
 )
 
 func TestMultiColumnCommonHandle(t *testing.T) {
@@ -375,7 +374,7 @@ func TestForceLockNonUniqueIndexInDDLMergingTempIndex(t *testing.T) {
 	}{
 		{model.StateWriteReorganization, model.BackfillStateReadyToMerge, true},
 		{model.StateWriteReorganization, model.BackfillStateMerging, true},
-		{model.StatePublic, model.BackfillStateInapplicable, config.NextGen}, // always lock non-unique index in next-gen.
+		{model.StatePublic, model.BackfillStateInapplicable, false},
 	}
 
 	mockCtx := mock.NewContext()

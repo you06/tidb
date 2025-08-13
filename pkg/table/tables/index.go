@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/tikv/client-go/v2/config"
 )
 
 // index is the data structure for index data in the KV store.
@@ -264,10 +263,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				// It is unnecessary to write the untouched temp index key-values.
 				continue
 			}
-			if config.NextGen {
-				// In NextGen mode, we always lock the non-unique index.
-				err = txn.GetMemBuffer().SetWithFlags(key, val, kv.SetNeedLocked)
-			} else if keyIsTempIdxKey {
+			if keyIsTempIdxKey {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
 				val = tempVal.Encode(nil)
 				// during some step of add-index, such as in write-reorg state, this
@@ -279,7 +275,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				// DDL: Writing the same normal index key, but it does not lock primary record.
 				err = txn.GetMemBuffer().SetWithFlags(key, val, kv.SetNeedLocked)
 			} else {
-				err = txn.GetMemBuffer().Set(key, val)
+				err = txn.GetMemBuffer().SetWithFlags(key, val, kv.SetNeedConstraintCheckInPrewrite)
 			}
 			if err != nil {
 				return nil, err
@@ -497,17 +493,14 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 			}
 		} else {
 			if len(key) > 0 {
-				if config.NextGen {
-					// In NextGen mode, we always lock the non-unique index.
-					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
-				} else if c.mayDDLMergingTempIndex() {
+				if c.mayDDLMergingTempIndex() {
 					// Here may have the situation:
 					// DML: Deleting the normal index key.
 					// DDL: Writing the same normal index key, but it does not lock primary record.
 					// In this case, we should lock the index key in DML to grantee the serialization.
 					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
 				} else {
-					err = txn.GetMemBuffer().Delete(key)
+					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedConstraintCheckInPrewrite)
 				}
 				if err != nil {
 					return err
