@@ -374,7 +374,7 @@ func TestForceLockNonUniqueIndexInDDLMergingTempIndex(t *testing.T) {
 	}{
 		{model.StateWriteReorganization, model.BackfillStateReadyToMerge, true},
 		{model.StateWriteReorganization, model.BackfillStateMerging, true},
-		{model.StatePublic, model.BackfillStateInapplicable, false},
+		{model.StatePublic, model.BackfillStateInapplicable, true},
 	}
 
 	mockCtx := mock.NewContext()
