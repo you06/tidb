@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
 )
@@ -1316,11 +1315,7 @@ func (e *InsertValues) batchCheckAndInsert(
 		// There may be duplicate keys inside the insert statement.
 		e.Ctx().GetSessionVars().StmtCtx.AddCopiedRows(1)
 		// all the rows have been checked, so it is safe to use DupKeyCheckSkip
-		if config.NextGen {
-			err = addRecord(ctx, rows[i], table.DupKeyCheckInPlace)
-		} else {
-			err = addRecord(ctx, rows[i], table.DupKeyCheckSkip)
-		}
+		err = addRecord(ctx, rows[i], table.DupKeyCheckSkip)
 		if err != nil {
 			// throw warning when violate check constraint
 			if table.ErrCheckConstraintViolated.Equal(err) {
