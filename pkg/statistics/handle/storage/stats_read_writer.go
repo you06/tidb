@@ -147,7 +147,7 @@ func (s *statsReadWriter) SaveAnalyzeResultToStorage(results *statistics.Analyze
 	start := time.Now()
 
 	bo := backoff.NewExponential(time.Millisecond, 2, time.Second)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 			statsVer, err = SaveAnalyzeResultToStorage(sctx, results, analyzeSnapshot)
 			return err
