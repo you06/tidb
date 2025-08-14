@@ -579,16 +579,24 @@ func (txn *LazyTxn) cleanup() {
 // KeysNeedToLock returns the keys need to be locked.
 func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 	if txn.stagingHandle == kv.InvalidStagingHandle {
+		fmt.Println("no staging, skip collect need lock keys")
 		return nil, nil
 	}
 	keys := make([]kv.Key, 0, txn.countHint())
 	buf := txn.Transaction.GetMemBuffer()
+	i := 0
 	buf.InspectStage(txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) {
+		i++
+		fmt.Printf("key need to lock: key: %v, need lock: %v\n", k, !KeyNeedToLock(k, v, flags))
 		if !KeyNeedToLock(k, v, flags) {
+			if !flags.HasNeedConstraintCheckInPrewrite() {
+				panic("unexpected key skip contraint check, k:" + string(k) + ", v:" + string(v))
+			}
 			return
 		}
 		keys = append(keys, k)
 	})
+	fmt.Printf("inspectStage done, staging: %d, visited: %d, locked: %v\n", txn.stagingHandle, i, keys)
 
 	return keys, nil
 }

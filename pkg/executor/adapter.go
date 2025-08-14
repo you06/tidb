@@ -1154,6 +1154,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			return err1
 		}
 		keys = txnCtx.CollectUnchangedKeysForLock(keys)
+		fmt.Printf("conn: %d, keys to lock: %v\n", a.Ctx.GetDistSQLCtx().ConnectionID, keys)
 		if len(keys) == 0 {
 			return nil
 		}

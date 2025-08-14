@@ -1260,7 +1260,7 @@ func TestDupKeyCheckMode(t *testing.T) {
 		require.False(t, flags.HasNeedConstraintCheckInPrewrite())
 		flags = getUniqueKeyFlags(h, types.NewIntDatum(102), memBuffer)
 		require.False(t, flags.HasPresumeKeyNotExists())
-		require.False(t, flags.HasNeedConstraintCheckInPrewrite())
+		require.True(t, flags.HasNeedConstraintCheckInPrewrite())
 		h = expectAddRecordSucc(types.MakeDatums(201, 202, 203), table.DupKeyCheckInPlace, table.DupKeyCheckInPrewrite)
 		flags = getHandleFlags(h, memBuffer)
 		require.False(t, flags.HasPresumeKeyNotExists())

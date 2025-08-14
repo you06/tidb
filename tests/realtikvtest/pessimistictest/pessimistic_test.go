@@ -2412,6 +2412,11 @@ func TestTransactionIsolationAndForeignKey(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		tk2ConnID := tk2.Session().GetSessionVars().ConnectionID
+		isPessimistic := tk2.Session().GetSessionVars().TxnCtx.IsPessimistic
+		isAutoCommitPessimistic := config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()
+		msg := fmt.Sprintf("tk2ConnID: %d, isPessimistic: %v, isAutoCommitPessimistic: %v", tk2ConnID, isPessimistic, isAutoCommitPessimistic)
+		fmt.Println(msg)
 		tk2.MustExec("delete from t1 where id=2")
 	}()
 	time.Sleep(time.Millisecond * 10)
