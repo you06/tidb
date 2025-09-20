@@ -16,12 +16,14 @@ package tables
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -40,7 +42,7 @@ var (
 
 type cachedTable struct {
 	TableCommon
-	cacheData atomic.Pointer[cacheData]
+	cacheData atomic.Pointer[CacheData]
 	totalSize int64
 	// StateRemote is not thread-safe, this tokenLimit is used to keep only one visitor.
 	tokenLimit
@@ -66,11 +68,55 @@ func (t tokenLimit) PutStateRemoteHandle(handle StateRemote) {
 	t <- handle
 }
 
-// cacheData pack the cache data and lease.
-type cacheData struct {
+// CacheData pack the cache data and lease.
+type CacheData struct {
+	mu    sync.RWMutex
+	tbl   *TableCommon
 	Start uint64
 	Lease uint64
 	kv.MemBuffer
+	key2datum    map[string][]types.Datum
+	handle2datum map[kv.Handle][]types.Datum
+}
+
+func (c *CacheData) GetData(exprCtx expression.BuildContext, key kv.Key, value []byte) []types.Datum {
+	c.mu.RLock()
+	datums, ok := c.key2datum[string(key)]
+	c.mu.RUnlock()
+	if ok {
+		return datums
+	}
+	_, handle, err := tablecodec.DecodeRecordKey(key)
+	if err != nil {
+		return nil
+	}
+	datums = c.GetDataByHandle(exprCtx, handle, value)
+	if datums == nil {
+		return nil
+	}
+	c.mu.Lock()
+	c.key2datum[string(key)] = datums
+	c.mu.Unlock()
+	return datums
+}
+
+func (c *CacheData) GetDataByHandle(exprCtx expression.BuildContext, handle kv.Handle, value []byte) []types.Datum {
+	c.mu.RLock()
+	datums, ok := c.handle2datum[handle]
+	c.mu.RUnlock()
+	if ok {
+		return datums
+	}
+	meta := c.tbl.Meta()
+	cols := c.tbl.Cols()
+	datums, _, err := DecodeRawRowData(exprCtx, meta, handle, cols, value)
+	if err != nil {
+		return nil
+	}
+	c.mu.Lock()
+	c.handle2datum[handle] = datums
+	c.mu.Unlock()
+	return datums
 }
 
 func leaseFromTS(ts uint64, leaseDuration time.Duration) uint64 {
@@ -111,7 +157,7 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (
 		}
 		// If data is not nil, but data.MemBuffer is nil, it means the data is being
 		// loading by a background goroutine.
-		return data.MemBuffer, data.MemBuffer == nil
+		return data, data.MemBuffer == nil
 	}
 	return nil, false
 }
@@ -205,10 +251,12 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 		return
 	}
 	if succ {
-		c.cacheData.Store(&cacheData{
-			Start:     ts,
-			Lease:     lease,
-			MemBuffer: nil, // Async loading, this will be set later.
+		c.cacheData.Store(&CacheData{
+			Start:        ts,
+			Lease:        lease,
+			MemBuffer:    nil, // Async loading, this will be set later.
+			key2datum:    make(map[string][]types.Datum, 128),
+			handle2datum: make(map[kv.Handle][]types.Datum, 128),
 		})
 
 		// Make the load data process async, in case that loading data takes longer the
@@ -224,10 +272,12 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 
 			tmp := c.cacheData.Load()
 			if tmp != nil && tmp.Start == ts {
-				c.cacheData.Store(&cacheData{
-					Start:     startTS,
-					Lease:     tmp.Lease,
-					MemBuffer: mb,
+				c.cacheData.Store(&CacheData{
+					Start:        startTS,
+					Lease:        tmp.Lease,
+					MemBuffer:    mb,
+					key2datum:    make(map[string][]types.Datum, 128),
+					handle2datum: make(map[kv.Handle][]types.Datum, 128),
 				})
 				atomic.StoreInt64(&c.totalSize, totalSize)
 			}
@@ -272,7 +322,7 @@ func (c *cachedTable) RemoveRecord(sctx table.MutateContext, txn kv.Transaction,
 // TestMockRenewLeaseABA2 is used by test function TestRenewLeaseABAFailPoint.
 var TestMockRenewLeaseABA2 chan struct{}
 
-func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData, leaseDuration time.Duration) {
+func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *CacheData, leaseDuration time.Duration) {
 	failpoint.Inject("mockRenewLeaseABA2", func(_ failpoint.Value) {
 		c.PutStateRemoteHandle(handle)
 		<-TestMockRenewLeaseABA2
@@ -291,10 +341,12 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData,
 		return
 	}
 	if newLease > 0 {
-		c.cacheData.Store(&cacheData{
-			Start:     data.Start,
-			Lease:     newLease,
-			MemBuffer: data.MemBuffer,
+		c.cacheData.Store(&CacheData{
+			Start:        data.Start,
+			Lease:        newLease,
+			MemBuffer:    data.MemBuffer,
+			key2datum:    make(map[string][]types.Datum, 128),
+			handle2datum: make(map[kv.Handle][]types.Datum, 128),
 		})
 	}
 

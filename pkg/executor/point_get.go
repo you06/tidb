@@ -103,7 +103,8 @@ func (b *executorBuilder) buildPointGet(p *physicalop.PointGetPlan) exec.Executo
 	}
 	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
 		if cacheTable := b.getCacheTable(p.TblInfo, snapshotTS); cacheTable != nil {
-			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
+			e.cacheData = cacheTable
+			//e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
 		}
 	}
 
@@ -131,6 +132,7 @@ type PointGetExecutor struct {
 	readReplicaScope string
 	isStaleness      bool
 	txn              kv.Transaction
+	cacheData        kv.MemBuffer // data from cache table
 	snapshot         kv.Snapshot
 	done             bool
 	lock             bool
@@ -431,11 +433,26 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
+	datumCacheHit := false
+	if e.cacheData != nil {
+		if cacheData, ok := e.cacheData.(*tables.CacheData); ok {
+			datums := cacheData.GetDataByHandle(e.Ctx().GetExprCtx(), e.handle, val)
+			if datums != nil {
+				datumCacheHit = true
+				for _, datum := range datums {
+					req.AppendDatum(0, &datum)
+				}
+			}
+		}
+	}
+
 	sctx := e.BaseExecutor.Ctx()
 	schema := e.Schema()
-	err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
-	if err != nil {
-		return err
+	if !datumCacheHit {
+		err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
+		if err != nil {
+			return err
+		}
 	}
 
 	err = fillRowChecksum(sctx, 0, 1, schema, e.tblInfo, [][]byte{val}, []kv.Handle{e.handle}, req, nil)
@@ -689,6 +706,11 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 			return val, nil
 		}
 	}
+
+	if e.cacheData != nil {
+		return e.cacheData.Get(ctx, key)
+	}
+
 	// if not read lock or table was unlock then snapshot get
 	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
 		// if the query has max execution time set, we need to set the context deadline for the get request

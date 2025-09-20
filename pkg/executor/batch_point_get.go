@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -78,8 +79,9 @@ type BatchPointGetExec struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	snapshot kv.Snapshot
-	stats    *runtimeStatsWithSnapshot
+	cacheData kv.MemBuffer
+	snapshot  kv.Snapshot
+	stats     *runtimeStatsWithSnapshot
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -212,11 +214,27 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	schema := e.Schema()
 	sctx := e.BaseExecutor.Ctx()
 	start := e.index
+	var cacheData *tables.CacheData
+	if e.cacheData != nil {
+		cacheData, _ = e.cacheData.(*tables.CacheData)
+	}
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val, req, e.rowDecoder)
-		if err != nil {
-			return err
+		hasCacheDatums := false
+		if cacheData != nil {
+			datums := cacheData.GetDataByHandle(e.Ctx().GetExprCtx(), handle, val)
+			if datums != nil {
+				hasCacheDatums = true
+				for _, datum := range datums {
+					req.AppendDatum(e.index-start, &datum)
+				}
+			}
+		}
+		if !hasCacheDatums {
+			err := DecodeRowValToChunk(sctx, schema, e.tblInfo, handle, val, req, e.rowDecoder)
+			if err != nil {
+				return err
+			}
 		}
 		e.index++
 	}
@@ -236,7 +254,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var handleVals map[string][]byte
 	var indexKeys []kv.Key
 	var err error
-	batchGetter := e.batchGetter
 	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
 		// If MaxExecutionTime is set, we need to set the context deadline for the batch get.
 		var cancel context.CancelFunc
@@ -297,7 +314,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 
 		// Fetch all handles.
-		handleVals, err = batchGetter.BatchGet(ctx, toFetchIndexKeys)
+		handleVals, err = e.batchGet(ctx, toFetchIndexKeys)
 		if err != nil {
 			return err
 		}
@@ -423,7 +440,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 	}
 	// Fetch all values.
-	values, err = batchGetter.BatchGet(ctx, keys)
+	values, err = e.batchGet(ctx, keys)
 	if err != nil {
 		return err
 	}
@@ -479,6 +496,17 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	e.handles = handles
 	return nil
+}
+
+func (e *BatchPointGetExec) batchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	if e.cacheData != nil {
+		byteKeys := make([][]byte, 0, len(keys))
+		for _, key := range keys {
+			byteKeys = append(byteKeys, key)
+		}
+		return e.cacheData.BatchGet(ctx, byteKeys)
+	}
+	return e.batchGetter.BatchGet(ctx, keys)
 }
 
 // LockKeys locks the keys for pessimistic transaction.

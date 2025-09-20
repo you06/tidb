@@ -5630,7 +5630,8 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 	}
 	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
 		if cacheTable := b.getCacheTable(plan.TblInfo, snapshotTS); cacheTable != nil {
-			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
+			e.cacheData = cacheTable
+			//e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
 		}
 	}
 

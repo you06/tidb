@@ -1015,7 +1015,16 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 			}
 		}
 
-		data, err := iter.memIndexReader.decodeIndexKeyValue(key, value, iter.tps, iter.colInfos)
+		var (
+			data []types.Datum
+			err  error
+		)
+		if cacheData, ok := iter.kvIter.cacheTable.(*tables.CacheData); ok {
+			data = cacheData.GetData(iter.memIndexReader.ctx.GetExprCtx(), key, value)
+		}
+		if data == nil {
+			data, err = iter.memIndexReader.decodeIndexKeyValue(key, value, iter.tps, iter.colInfos)
+		}
 		if err != nil {
 			return nil, err
 		}
