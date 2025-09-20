@@ -16,6 +16,7 @@ package tables
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -80,6 +81,10 @@ type CacheData struct {
 }
 
 func (c *CacheData) GetData(exprCtx expression.BuildContext, key kv.Key, value []byte) []types.Datum {
+	if !tablecodec.IsRecordKey(key) {
+		// handle index key
+		return nil
+	}
 	c.mu.RLock()
 	datums, ok := c.key2datum[string(key)]
 	c.mu.RUnlock()
@@ -155,9 +160,12 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (
 				go c.renewLease(h, ts, data, leaseDuration)
 			}
 		}
+		if data.MemBuffer == nil {
+			return nil, true
+		}
 		// If data is not nil, but data.MemBuffer is nil, it means the data is being
 		// loading by a background goroutine.
-		return data, data.MemBuffer == nil
+		return data, false
 	}
 	return nil, false
 }
@@ -252,11 +260,10 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 	}
 	if succ {
 		c.cacheData.Store(&CacheData{
-			Start:        ts,
-			Lease:        lease,
-			MemBuffer:    nil, // Async loading, this will be set later.
-			key2datum:    make(map[string][]types.Datum, 128),
-			handle2datum: make(map[kv.Handle][]types.Datum, 128),
+			tbl:       &c.TableCommon,
+			Start:     ts,
+			Lease:     lease,
+			MemBuffer: nil, // Async loading, this will be set later.
 		})
 
 		// Make the load data process async, in case that loading data takes longer the
@@ -273,6 +280,7 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 			tmp := c.cacheData.Load()
 			if tmp != nil && tmp.Start == ts {
 				c.cacheData.Store(&CacheData{
+					tbl:          &c.TableCommon,
 					Start:        startTS,
 					Lease:        tmp.Lease,
 					MemBuffer:    mb,
@@ -341,13 +349,16 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *CacheData,
 		return
 	}
 	if newLease > 0 {
+		data.RLock()
 		c.cacheData.Store(&CacheData{
+			tbl:          &c.TableCommon,
 			Start:        data.Start,
 			Lease:        newLease,
 			MemBuffer:    data.MemBuffer,
-			key2datum:    make(map[string][]types.Datum, 128),
-			handle2datum: make(map[kv.Handle][]types.Datum, 128),
+			key2datum:    maps.Clone(data.key2datum),
+			handle2datum: maps.Clone(data.handle2datum),
 		})
+		data.RUnlock()
 	}
 
 	failpoint.Inject("mockRenewLeaseABA2", func(_ failpoint.Value) {

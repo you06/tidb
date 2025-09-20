@@ -17,10 +17,11 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"slices"
 	"sync/atomic"
 	"time"
+
+	"github.com/pingcap/tidb/pkg/table/tables"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -215,8 +216,13 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	sctx := e.BaseExecutor.Ctx()
 	start := e.index
 	var cacheData *tables.CacheData
+	var idx2offset map[int]int
 	if e.cacheData != nil {
 		cacheData, _ = e.cacheData.(*tables.CacheData)
+		idx2offset = make(map[int]int, len(schema.Columns))
+		for i, col := range schema.Columns {
+			idx2offset[i] = e.tblInfo.GetColumnByID(col.ID).Offset
+		}
 	}
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
@@ -225,8 +231,8 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			datums := cacheData.GetDataByHandle(e.Ctx().GetExprCtx(), handle, val)
 			if datums != nil {
 				hasCacheDatums = true
-				for _, datum := range datums {
-					req.AppendDatum(e.index-start, &datum)
+				for i := range schema.Columns {
+					req.AppendDatum(i, &datums[idx2offset[i]])
 				}
 			}
 		}

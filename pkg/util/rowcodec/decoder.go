@@ -369,6 +369,10 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 	return nil
 }
 
+func (decoder *ChunkDecoder) AppendRow(row []types.Datum, chk *chunk.Chunk) {
+	// for colIdx := range decoder.columns {
+}
+
 // BytesDecoder decodes the row to old datums bytes.
 type BytesDecoder struct {
 	decoder

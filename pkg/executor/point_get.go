@@ -434,20 +434,20 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	datumCacheHit := false
+	schema := e.Schema()
 	if e.cacheData != nil {
 		if cacheData, ok := e.cacheData.(*tables.CacheData); ok {
 			datums := cacheData.GetDataByHandle(e.Ctx().GetExprCtx(), e.handle, val)
 			if datums != nil {
 				datumCacheHit = true
-				for _, datum := range datums {
-					req.AppendDatum(0, &datum)
+				for i, col := range schema.Columns {
+					req.AppendDatum(i, &datums[e.tblInfo.GetColumnByID(col.ID).Offset])
 				}
 			}
 		}
 	}
 
 	sctx := e.BaseExecutor.Ctx()
-	schema := e.Schema()
 	if !datumCacheHit {
 		err = DecodeRowValToChunk(sctx, schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
 		if err != nil {

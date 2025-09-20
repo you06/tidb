@@ -59,7 +59,7 @@ type memIndexReader struct {
 	addedRowsLen   int
 	retFieldTypes  []*types.FieldType
 	outputOffset   []int
-	cacheTable     kv.MemBuffer
+	cacheTable     *tables.CacheData
 	keepOrder      bool
 	physTblIDIdx   int
 	partitionIDMap map[int64]struct{}
@@ -156,9 +156,18 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
 	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, m.desc, func(key, value []byte) error {
-		data, err := m.decodeIndexKeyValue(key, value, tps, colInfos)
-		if err != nil {
-			return err
+		var (
+			data []types.Datum
+			err  error
+		)
+		if m.cacheTable != nil {
+			data = m.cacheTable.GetData(m.ctx.GetExprCtx(), key, value)
+		}
+		if data == nil {
+			data, err = m.decodeIndexKeyValue(key, value, tps, colInfos)
+			if err != nil {
+				return err
+			}
 		}
 
 		mutableRow.SetDatums(data...)
@@ -245,7 +254,7 @@ type memTableReader struct {
 	colIDs        map[int64]int
 	buffer        allocBuf
 	pkColIDs      []int64
-	cacheTable    kv.MemBuffer
+	cacheTable    *tables.CacheData
 	offsets       []int
 	keepOrder     bool
 	compareExec
@@ -318,7 +327,7 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 type txnMemBufferIter struct {
 	sctx       sessionctx.Context
 	kvRanges   []kv.KeyRange
-	cacheTable kv.MemBuffer
+	cacheTable *tables.CacheData
 	txn        kv.Transaction
 	idx        int
 	curr       kv.Iterator
@@ -326,7 +335,7 @@ type txnMemBufferIter struct {
 	err        error
 }
 
-func newTxnMemBufferIter(sctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges []kv.KeyRange, reverse bool) (*txnMemBufferIter, error) {
+func newTxnMemBufferIter(sctx sessionctx.Context, cacheTable *tables.CacheData, kvRanges []kv.KeyRange, reverse bool) (*txnMemBufferIter, error) {
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -581,7 +590,7 @@ func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 
 type processKVFunc func(key, value []byte) error
 
-func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges []kv.KeyRange, reverse bool, fn processKVFunc) error {
+func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable *tables.CacheData, kvRanges []kv.KeyRange, reverse bool, fn processKVFunc) error {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
@@ -621,7 +630,7 @@ func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges 
 	return nil
 }
 
-func getSnapIter(ctx sessionctx.Context, cacheTable kv.MemBuffer, rg kv.KeyRange, reverse bool) (snapCacheIter kv.Iterator, err error) {
+func getSnapIter(ctx sessionctx.Context, cacheTable *tables.CacheData, rg kv.KeyRange, reverse bool) (snapCacheIter kv.Iterator, err error) {
 	var cacheIter, snapIter kv.Iterator
 	tempTableData := ctx.GetSessionVars().TemporaryTableData
 	if tempTableData != nil {
@@ -636,9 +645,9 @@ func getSnapIter(ctx sessionctx.Context, cacheTable kv.MemBuffer, rg kv.KeyRange
 		snapCacheIter = snapIter
 	} else if cacheTable != nil {
 		if !reverse {
-			cacheIter, err = cacheTable.Iter(rg.StartKey, rg.EndKey)
+			cacheIter, err = cacheTable.MemBuffer.Iter(rg.StartKey, rg.EndKey)
 		} else {
-			cacheIter, err = cacheTable.IterReverse(rg.EndKey, rg.StartKey)
+			cacheIter, err = cacheTable.MemBuffer.IterReverse(rg.EndKey, rg.StartKey)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -704,7 +713,7 @@ type memIndexLookUpReader struct {
 	partitionTables   []table.PhysicalTable // partition tables to access
 	partitionKVRanges [][]kv.KeyRange       // kv ranges for these partition tables
 
-	cacheTable kv.MemBuffer
+	cacheTable *tables.CacheData
 
 	keepOrder bool
 	compareExec
@@ -1019,8 +1028,8 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 			data []types.Datum
 			err  error
 		)
-		if cacheData, ok := iter.kvIter.cacheTable.(*tables.CacheData); ok {
-			data = cacheData.GetData(iter.memIndexReader.ctx.GetExprCtx(), key, value)
+		if iter.kvIter.cacheTable != nil {
+			data = iter.kvIter.cacheTable.GetData(iter.memIndexReader.ctx.GetExprCtx(), key, value)
 		}
 		if data == nil {
 			data, err = iter.memIndexReader.decodeIndexKeyValue(key, value, iter.tps, iter.colInfos)
