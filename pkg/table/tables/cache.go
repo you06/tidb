@@ -349,7 +349,7 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *CacheData,
 		return
 	}
 	if newLease > 0 {
-		data.RLock()
+		data.mu.RLock()
 		c.cacheData.Store(&CacheData{
 			tbl:          &c.TableCommon,
 			Start:        data.Start,
@@ -358,7 +358,7 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *CacheData,
 			key2datum:    maps.Clone(data.key2datum),
 			handle2datum: maps.Clone(data.handle2datum),
 		})
-		data.RUnlock()
+		data.mu.RUnlock()
 	}
 
 	failpoint.Inject("mockRenewLeaseABA2", func(_ failpoint.Value) {
