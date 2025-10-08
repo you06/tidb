@@ -488,6 +488,9 @@ type StatementContext struct {
 
 	// OperatorNum is used to record the number of operators in the current logical plan.
 	OperatorNum uint64
+
+	// TracerTag is used to tag the statement execution in the log when tracing is enabled.
+	TracerTag string
 }
 
 // DefaultStmtErrLevels is the default error levels for statement

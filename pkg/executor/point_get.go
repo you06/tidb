@@ -43,10 +43,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"go.uber.org/zap"
 )
 
 func (b *executorBuilder) buildPointGet(p *physicalop.PointGetPlan) exec.Executor {
@@ -698,11 +700,19 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	// if not read lock or table was unlock then snapshot get
 	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
 		// if the query has max execution time set, we need to set the context deadline for the get request
-		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
 		defer cancel()
-		return e.snapshot.Get(ctxWithTimeout, key)
 	}
-	return e.snapshot.Get(ctx, key)
+	val, err = e.snapshot.Get(ctx, key)
+	if tag, ok := kv.GetTracer(ctx); ok {
+		logutil.BgLogger().Warn("End tracer",
+			zap.String("tag", tag),
+			zap.Stringer("key", key),
+			zap.String("value", fmt.Sprintf("%q", val)),
+		)
+	}
+	return val, err
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {

@@ -2204,7 +2204,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Execute the physical plan.
 	defer logStmt(stmt, s) // defer until txnStartTS is set
-
+	ctx = s.sessionVars.StartTracer(ctx, stmtNode)
 	var recordSet sqlexec.RecordSet
 	if stmt.PsStmt != nil { // point plan short path
 		recordSet, err = stmt.PointGet(ctx)
@@ -4315,7 +4315,7 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 
 func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 	vars := s.GetSessionVars()
-	if vardef.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
+	if len(vars.StmtCtx.TracerTag) > 0 || vardef.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
 		var query string
 		if isPrepared {
 			query = execStmt.OriginText()
@@ -4340,6 +4340,9 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			zap.Bool("isPessimistic", vars.TxnCtx.IsPessimistic),
 			zap.String("sessionTxnMode", vars.GetReadableTxnMode()),
 			zap.String("sql", query),
+		}
+		if len(vars.StmtCtx.TracerTag) > 0 {
+			fields = append(fields, zap.String("tracerTag", vars.StmtCtx.TracerTag))
 		}
 		if ot := execStmt.OriginText(); ot != execStmt.Text() {
 			fields = append(fields, zap.String("originText", strconv.Quote(ot)))

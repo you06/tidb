@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	"fmt"
 	"maps"
 	"math"
 	"math/rand"
@@ -3763,4 +3764,37 @@ func RemoveLockDDLJobs(sv *SessionVars, jobs map[int64]*mdldef.JobMDL, printLog 
 		}
 		return true
 	})
+}
+
+func (s *SessionVars) StartTracer(ctx context.Context, stmt ast.StmtNode) context.Context {
+	if !vardef.ExecutionLogTrace.Load() {
+		return ctx
+	}
+	if s.ConnectionID == 0 {
+		return ctx
+	}
+	switch stmt.(type) {
+	case *ast.SelectStmt, *ast.UpdateStmt, *ast.DeleteStmt, *ast.InsertStmt, *ast.CommitStmt:
+	default:
+		return ctx
+	}
+	if !config.GetGlobalConfig().EnableGlobalKill {
+		logutil.BgLogger().Warn("Skip start tracer because enable-global-kill is off")
+		return ctx
+	}
+
+	startTS := s.GetSessionVars().TxnCtx.StartTS
+	var tracerTag string
+	if startTS == math.MaxUint64 {
+		tracerTag = fmt.Sprintf("%d(max u64 ts)", s.ConnectionID)
+	} else {
+		tracerTag = strconv.Itoa(int(startTS))
+	}
+	logutil.Logger(ctx).Warn("Start tracer",
+		zap.String("tag", tracerTag),
+		zap.Uint64("conn", s.ConnectionID))
+	s.StmtCtx.TracerTag = tracerTag
+	s.StmtCtx.WriteSlowLog = true
+	ctx = kv.WithTracer(ctx, tracerTag)
+	return ctx
 }

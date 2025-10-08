@@ -287,3 +287,6 @@ func getLossyDDLReorgSource(txnSource uint64) uint64 {
 func isLossyDDLReorgSourceSet(txnSource uint64) bool {
 	return (txnSource >> lossyDDLReorgSourceShift) != 0
 }
+
+var WithTracer = util.WithTracer
+var GetTracer = util.GetTracer

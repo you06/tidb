@@ -1308,6 +1308,10 @@ const (
 	// TiDBAdvancerCheckPointLagLimit controls the maximum lag could be tolerated for the checkpoint lag.
 	// The log backup task will be paused if the checkpoint lag is larger than it.
 	TiDBAdvancerCheckPointLagLimit = "tidb_advancer_check_point_lag_limit"
+
+	// TiDBExecutionLogTrace indicates whether to enable global execution log trace.
+	// When it is enabled, the execution log will be print which contains the process details.
+	TiDBExecutionLogTrace = "tidb_execution_log_trace"
 )
 
 // TiDB intentional limits, can be raised in the future.
@@ -1716,6 +1720,7 @@ const (
 	DefTiDBEnableTSValidation                         = true
 	DefTiDBLoadBindingTimeout                         = 200
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
+	DefTiDBExecutionLogTrace                          = false
 )
 
 // Process global variables.
@@ -1847,6 +1852,8 @@ var (
 	CircuitBreakerPDMetadataErrorRateThresholdRatio = atomic.NewFloat64(0.0)
 
 	AdvancerCheckPointLagLimit = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
+
+	ExecutionLogTrace = atomic.NewBool(DefTiDBExecutionLogTrace)
 )
 
 func serverMemoryLimitDefaultValue() string {

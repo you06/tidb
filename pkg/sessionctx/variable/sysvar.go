@@ -3663,6 +3663,20 @@ var defaultSysVars = []*SysVar{
 			return vardef.AdvancerCheckPointLagLimit.Load().String(), nil
 		},
 	},
+	{
+		Scope: vardef.ScopeGlobal,
+		Name:  vardef.TiDBExecutionLogTrace,
+		Value: BoolToOnOff(vardef.DefTiDBExecutionLogTrace),
+		Type:  vardef.TypeBool,
+		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+			boolVal := TiDBOptOn(val)
+			if boolVal && !config.GetGlobalConfig().EnableGlobalKill {
+				return errors.New("to enable tidb_execution_log_trace, please also enable enable-global-kill in the config")
+			}
+			vardef.ExecutionLogTrace.Store(boolVal)
+			return nil
+		},
+	},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)
