@@ -1753,6 +1753,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		UsedStats:         stmtCtx.GetUsedStatsInfo(false),
 		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 		Warnings:          variable.CollectWarningsForSlowLog(stmtCtx),
+		TracerTag:         sessVars.StmtCtx.TracerTag,
 		ResourceGroupName: sessVars.StmtCtx.ResourceGroupName,
 		RUDetails:         ruDetails,
 		CPUUsages:         sessVars.SQLCPUUsages.GetCPUUsages(),

@@ -276,6 +276,7 @@ type SlowQueryLogItems struct {
 	ExecRetryTime     time.Duration
 	ResultRows        int64
 	Warnings          []JSONSQLWarnForSlowLog
+	TracerTag         string
 	// resource information
 	ResourceGroupName string
 	RUDetails         *util.RUDetails
@@ -464,6 +465,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		if err != nil {
 			buf.WriteString(err.Error())
 		}
+	}
+	if len(logItems.TracerTag) > 0 {
+		writeSlowLogItem(&buf, "TraceTag", logItems.TracerTag)
 	}
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	writeSlowLogItem(&buf, SlowLogIsExplicitTxn, strconv.FormatBool(logItems.IsExplicitTxn))

@@ -3794,7 +3794,7 @@ func (s *SessionVars) StartTracer(ctx context.Context, stmt ast.StmtNode) contex
 		zap.String("tag", tracerTag),
 		zap.Uint64("conn", s.ConnectionID))
 	s.StmtCtx.TracerTag = tracerTag
-	s.StmtCtx.WriteSlowLog = true
+	s.StmtCtx.WriteSlowLog = true // write slowlog for more information.
 	ctx = kv.WithTracer(ctx, tracerTag)
 	return ctx
 }
