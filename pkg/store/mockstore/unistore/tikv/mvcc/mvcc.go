@@ -18,7 +18,9 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"slices"
+	"sort"
 	"unsafe"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -47,6 +49,10 @@ func DecodeLock(data []byte) (l Lock) {
 		}
 	}
 	l.Value = lockBuf[cursor:]
+	if kvrpcpb.Op(l.Op) == kvrpcpb.Op_SharedLock {
+		l.SharedLocks = decodeSharedLocks(l.Value)
+		l.Value = nil
+	}
 	return
 }
 
@@ -71,38 +77,91 @@ type Lock struct {
 	Primary     []byte
 	Value       []byte
 	Secondaries [][]byte
+	// SharedLocks is only used when Op is `kvrpcpb.Op_SharedLock`.
+	// It stores per-transaction locks keyed by their StartTS.
+	SharedLocks map[uint64]Lock
 }
 
 // MarshalBinary implements encoding.BinaryMarshaler interface.
 func (l *Lock) MarshalBinary() []byte {
-	lockLen := mvccLockHdrSize + len(l.Primary) + len(l.Value)
+	valueToEncode := l.Value
+	primaryToEncode := l.Primary
+	secondariesToEncode := l.Secondaries
+	lockHdr := l.LockHdr
+	if kvrpcpb.Op(lockHdr.Op) == kvrpcpb.Op_SharedLock {
+		primaryToEncode = nil
+		secondariesToEncode = nil
+		valueToEncode = encodeSharedLocks(l.SharedLocks)
+		lockHdr.PrimaryLen = 0
+		lockHdr.SecondaryNum = 0
+		lockHdr.UseAsyncCommit = false
+		lockHdr.HasOldVer = false
+		lockHdr.TTL = 0
+		lockHdr.MinCommitTS = 0
+	}
+
+	lockLen := mvccLockHdrSize + len(primaryToEncode) + len(valueToEncode)
 	length := lockLen
-	if l.LockHdr.SecondaryNum > 0 {
-		for _, secondaryKey := range l.Secondaries {
+	if lockHdr.SecondaryNum > 0 {
+		for _, secondaryKey := range secondariesToEncode {
 			length += 2
 			length += len(secondaryKey)
 		}
 	}
 	buf := make([]byte, length)
 	hdr := (*LockHdr)(unsafe.Pointer(&buf[0]))
-	*hdr = l.LockHdr
+	*hdr = lockHdr
 	cursor := mvccLockHdrSize
-	copy(buf[cursor:], l.Primary)
-	cursor += len(l.Primary)
-	if l.LockHdr.SecondaryNum > 0 {
-		for _, secondaryKey := range l.Secondaries {
+	copy(buf[cursor:], primaryToEncode)
+	cursor += len(primaryToEncode)
+	if lockHdr.SecondaryNum > 0 {
+		for _, secondaryKey := range secondariesToEncode {
 			binary.LittleEndian.PutUint16(buf[cursor:], uint16(len(secondaryKey)))
 			cursor += 2
 			copy(buf[cursor:], secondaryKey)
 			cursor += len(secondaryKey)
 		}
 	}
-	copy(buf[cursor:], l.Value)
+	copy(buf[cursor:], valueToEncode)
 	return buf
 }
 
 // ToLockInfo converts an mvcc Lock to kvrpcpb.LockInfo
 func (l *Lock) ToLockInfo(key []byte) *kvrpcpb.LockInfo {
+	if kvrpcpb.Op(l.Op) == kvrpcpb.Op_SharedLock {
+		info := &kvrpcpb.LockInfo{
+			Key:      key,
+			LockType: kvrpcpb.Op_SharedLock,
+		}
+
+		if len(l.SharedLocks) == 0 {
+			return info
+		}
+
+		startTSList := make([]uint64, 0, len(l.SharedLocks))
+		for ts := range l.SharedLocks {
+			startTSList = append(startTSList, ts)
+		}
+		sort.Slice(startTSList, func(i, j int) bool { return startTSList[i] < startTSList[j] })
+		info.SharedLockInfos = make([]*kvrpcpb.LockInfo, 0, len(startTSList))
+		for _, startTS := range startTSList {
+			sub := l.SharedLocks[startTS]
+			subInfo := sub.ToLockInfo(key)
+			switch subInfo.LockType {
+			case kvrpcpb.Op_Lock:
+				subInfo.LockType = kvrpcpb.Op_SharedLock
+			case kvrpcpb.Op_PessimisticLock:
+				subInfo.LockType = kvrpcpb.Op_SharedPessimisticLock
+			default:
+				// Shared locks should only contain lock/pessimistic entries.
+				subInfo.LockType = kvrpcpb.Op_SharedLock
+			}
+			subInfo.SharedLockInfos = nil
+			info.SharedLockInfos = append(info.SharedLockInfos, subInfo)
+		}
+		return info
+	}
+
 	return &kvrpcpb.LockInfo{
 		PrimaryLock:     l.Primary,
 		LockVersion:     l.StartTS,
@@ -126,6 +185,143 @@ func (l *Lock) String() string {
 		hex.EncodeToString(l.Primary),
 		l.UseAsyncCommit,
 	)
+}
+
+func encodeSharedLocks(locks map[uint64]Lock) []byte {
+	if len(locks) == 0 {
+		return make([]byte, 4)
+	}
+	startTSList := make([]uint64, 0, len(locks))
+	for ts := range locks {
+		startTSList = append(startTSList, ts)
+	}
+	sort.Slice(startTSList, func(i, j int) bool { return startTSList[i] < startTSList[j] })
+
+	total := 4
+	encoded := make([][]byte, 0, len(startTSList))
+	for _, ts := range startTSList {
+		sub := locks[ts]
+		b := sub.MarshalBinary()
+		encoded = append(encoded, b)
+		total += 4 + len(b)
+	}
+
+	buf := make([]byte, total)
+	binary.LittleEndian.PutUint32(buf[:4], uint32(len(encoded)))
+	cursor := 4
+	for _, b := range encoded {
+		binary.LittleEndian.PutUint32(buf[cursor:cursor+4], uint32(len(b)))
+		cursor += 4
+		copy(buf[cursor:], b)
+		cursor += len(b)
+	}
+	return buf
+}
+
+func decodeSharedLocks(data []byte) map[uint64]Lock {
+	if len(data) < 4 {
+		return map[uint64]Lock{}
+	}
+	n := int(binary.LittleEndian.Uint32(data[:4]))
+	cursor := 4
+	out := make(map[uint64]Lock, n)
+	for range n {
+		if cursor+4 > len(data) {
+			break
+		}
+		l := int(binary.LittleEndian.Uint32(data[cursor : cursor+4]))
+		cursor += 4
+		if l < 0 || cursor+l > len(data) {
+			break
+		}
+		sub := DecodeLock(data[cursor : cursor+l])
+		cursor += l
+		out[sub.StartTS] = sub
+	}
+	return out
+}
+
+func (l *Lock) IsSharedLock() bool {
+	return kvrpcpb.Op(l.Op) == kvrpcpb.Op_SharedLock
+}
+
+func (l *Lock) ContainsStartTS(startTS uint64) bool {
+	if !l.IsSharedLock() {
+		return l.StartTS == startTS
+	}
+	if l.SharedLocks == nil {
+		return false
+	}
+	_, ok := l.SharedLocks[startTS]
+	return ok
+}
+
+func (l *Lock) GetSharedLock(startTS uint64) (Lock, bool) {
+	if !l.IsSharedLock() || l.SharedLocks == nil {
+		return Lock{}, false
+	}
+	sub, ok := l.SharedLocks[startTS]
+	return sub, ok
+}
+
+func (l *Lock) RemoveSharedLock(startTS uint64) (Lock, bool) {
+	if !l.IsSharedLock() || l.SharedLocks == nil {
+		return Lock{}, false
+	}
+	sub, ok := l.SharedLocks[startTS]
+	if !ok {
+		return Lock{}, false
+	}
+	delete(l.SharedLocks, startTS)
+	l.recomputeSharedMinTS()
+	return sub, true
+}
+
+func (l *Lock) PutSharedLock(sub Lock) {
+	if l.SharedLocks == nil {
+		l.SharedLocks = make(map[uint64]Lock)
+	}
+	_, replaced := l.SharedLocks[sub.StartTS]
+	l.SharedLocks[sub.StartTS] = sub
+	if replaced {
+		l.recomputeSharedMinTS()
+		return
+	}
+	if l.StartTS == 0 {
+		l.StartTS = math.MaxUint64
+	}
+	if l.ForUpdateTS == 0 {
+		l.ForUpdateTS = math.MaxUint64
+	}
+	l.StartTS = min(l.StartTS, sub.StartTS)
+	if sub.ForUpdateTS > 0 {
+		l.ForUpdateTS = min(l.ForUpdateTS, sub.ForUpdateTS)
+	}
+}
+
+func (l *Lock) recomputeSharedMinTS() {
+	if !l.IsSharedLock() {
+		return
+	}
+	if len(l.SharedLocks) == 0 {
+		l.StartTS = 0
+		l.ForUpdateTS = 0
+		return
+	}
+	minStart := uint64(math.MaxUint64)
+	minForUpdate := uint64(math.MaxUint64)
+	for _, sub := range l.SharedLocks {
+		minStart = min(minStart, sub.StartTS)
+		if sub.ForUpdateTS > 0 {
+			minForUpdate = min(minForUpdate, sub.ForUpdateTS)
+		}
+	}
+	l.StartTS = minStart
+	if minForUpdate == uint64(math.MaxUint64) {
+		l.ForUpdateTS = 0
+	} else {
+		l.ForUpdateTS = minForUpdate
+	}
 }
 
 // UserMeta value for lock.

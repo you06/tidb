@@ -743,6 +743,7 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 }
 
 func TestForeignKeyOnDeleteParentTableCheck(t *testing.T) {
+	// error when committing transaction
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")

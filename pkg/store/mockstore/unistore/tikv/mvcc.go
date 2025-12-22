@@ -257,25 +257,63 @@ func (store *MVCCStore) pessimisticLockInner(reqCtx *requestCtx, req *kvrpcpb.Pe
 	batch := store.dbWriter.NewWriteBatch(startTS, 0, reqCtx.rpcCtx)
 	var dup bool
 	for _, m := range mutations {
-		lock, err := store.checkConflictInLockStore(reqCtx, m, startTS)
-		if err != nil {
-			var resourceGroupTag []byte
-			if req.Context != nil {
-				resourceGroupTag = req.Context.ResourceGroupTag
-			}
-			return store.handleCheckPessimisticErr(startTS, err, req.IsFirstLock, req.WaitTimeout, m.Key, resourceGroupTag)
+		isSharedReq := m.Op == kvrpcpb.Op_SharedPessimisticLock
+		if !isSharedReq && m.Op != kvrpcpb.Op_PessimisticLock {
+			return nil, errors.Errorf("mismatch Op in pessimistic lock mutations: %v", m.Op)
 		}
+
+		lock := store.getLock(reqCtx, m.Key)
 		if lock != nil {
-			if lock.Op != uint8(kvrpcpb.Op_PessimisticLock) {
-				return nil, errors.New("lock type not match")
+			if lock.IsSharedLock() {
+				if !isSharedReq {
+					var resourceGroupTag []byte
+					if req.Context != nil {
+						resourceGroupTag = req.Context.ResourceGroupTag
+					}
+					err := kverrors.BuildLockErr(m.Key, lock)
+					return store.handleCheckPessimisticErr(startTS, err, req.IsFirstLock, req.WaitTimeout, m.Key, resourceGroupTag)
+				}
+
+				sub, ok := lock.GetSharedLock(startTS)
+				if ok {
+					if sub.Op != uint8(kvrpcpb.Op_PessimisticLock) {
+						return nil, errors.New("lock type not match")
+					}
+					if sub.ForUpdateTS >= req.ForUpdateTs {
+						dup = true
+						break
+					}
+				}
+			} else {
+				if isSharedReq {
+					var resourceGroupTag []byte
+					if req.Context != nil {
+						resourceGroupTag = req.Context.ResourceGroupTag
+					}
+					err := kverrors.BuildLockErr(m.Key, lock)
+					return store.handleCheckPessimisticErr(startTS, err, req.IsFirstLock, req.WaitTimeout, m.Key, resourceGroupTag)
+				}
+
+				if lock.StartTS == startTS {
+					if lock.Op != uint8(kvrpcpb.Op_PessimisticLock) {
+						return nil, errors.New("lock type not match")
+					}
+					if lock.ForUpdateTS >= req.ForUpdateTs {
+						dup = true
+						break
+					}
+					// Single statement rollback key, we can overwrite it.
+				} else {
+					var resourceGroupTag []byte
+					if req.Context != nil {
+						resourceGroupTag = req.Context.ResourceGroupTag
+					}
+					err := kverrors.BuildLockErr(m.Key, lock)
+					return store.handleCheckPessimisticErr(startTS, err, req.IsFirstLock, req.WaitTimeout, m.Key, resourceGroupTag)
+				}
 			}
-			if lock.ForUpdateTS >= req.ForUpdateTs {
-				// It's a duplicate command, we can simply return values.
-				dup = true
-				break
-			}
-			// Single statement rollback key, we can overwrite it.
 		}
+
 		if bytes.Equal(m.Key, req.PrimaryLock) {
 			txnStatus := store.checkExtraTxnStatus(reqCtx, m.Key, startTS)
 			if txnStatus.isRollback {
@@ -302,7 +340,27 @@ func (store *MVCCStore) pessimisticLockInner(reqCtx *requestCtx, req *kvrpcpb.Pe
 			if lock == nil {
 				continue
 			}
-			batch.PessimisticLock(m.Key, lock)
+			if m.Op == kvrpcpb.Op_SharedPessimisticLock {
+				existing := store.getLock(reqCtx, m.Key)
+				var shared mvcc.Lock
+				if existing == nil {
+					shared = mvcc.Lock{
+						LockHdr: mvcc.LockHdr{
+							Op: uint8(kvrpcpb.Op_SharedLock),
+						},
+						SharedLocks: make(map[uint64]mvcc.Lock),
+					}
+				} else {
+					shared = *existing
+					if !shared.IsSharedLock() {
+						return nil, errors.New("shared pessimistic lock requires shared lock wrapper")
+					}
+				}
+				shared.PutSharedLock(*lock)
+				batch.PessimisticLock(m.Key, &shared)
+			} else {
+				batch.PessimisticLock(m.Key, lock)
+			}
 		}
 		err = store.dbWriter.Write(batch)
 		if err != nil {
@@ -440,15 +498,38 @@ func (store *MVCCStore) PessimisticRollback(reqCtx *requestCtx, req *kvrpcpb.Pes
 	defer regCtx.ReleaseLatches(hashVals)
 	startTS := req.StartVersion
 	var batch mvcc.WriteBatch
+	var wb *writeBatch
 	for _, k := range keys {
 		lock := store.getLock(reqCtx, k)
-		if lock != nil &&
-			lock.Op == uint8(kvrpcpb.Op_PessimisticLock) &&
+		if lock == nil {
+			continue
+		}
+		if lock.IsSharedLock() {
+			sub, ok := lock.GetSharedLock(startTS)
+			if ok &&
+				sub.Op == uint8(kvrpcpb.Op_PessimisticLock) &&
+				sub.ForUpdateTS <= req.ForUpdateTs {
+				if batch == nil {
+					batch = store.dbWriter.NewWriteBatch(startTS, 0, reqCtx.rpcCtx)
+					wb = batch.(*writeBatch)
+				}
+				shared := *lock
+				_, _ = shared.RemoveSharedLock(startTS)
+				batch.PessimisticRollback(k)
+				if len(shared.SharedLocks) > 0 {
+					overrideLastLockDeleteWithSet(wb, k, shared.MarshalBinary())
+				}
+			}
+			continue
+		}
+		if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) &&
 			lock.StartTS == startTS &&
 			lock.ForUpdateTS <= req.ForUpdateTs {
 			if batch == nil {
 				batch = store.dbWriter.NewWriteBatch(startTS, 0, reqCtx.rpcCtx)
+				wb = batch.(*writeBatch)
 			}
+			_ = wb
 			batch.PessimisticRollback(k)
 		}
 	}
@@ -468,20 +549,44 @@ func (store *MVCCStore) TxnHeartBeat(reqCtx *requestCtx, req *kvrpcpb.TxnHeartBe
 	regCtx.AcquireLatches(hashVals)
 	defer regCtx.ReleaseLatches(hashVals)
 	lock := store.getLock(reqCtx, req.PrimaryLock)
-	if lock != nil && lock.StartTS == req.StartVersion {
-		if !bytes.Equal(lock.Primary, req.PrimaryLock) {
-			return 0, errors.New("heartbeat on non-primary key")
-		}
-		if lock.TTL < uint32(req.AdviseLockTtl) {
-			lock.TTL = uint32(req.AdviseLockTtl)
-			batch := store.dbWriter.NewWriteBatch(req.StartVersion, 0, reqCtx.rpcCtx)
-			batch.PessimisticLock(req.PrimaryLock, lock)
-			err = store.dbWriter.Write(batch)
-			if err != nil {
-				return 0, err
+	if lock != nil {
+		if lock.IsSharedLock() {
+			sub, ok := lock.GetSharedLock(req.StartVersion)
+			if !ok {
+				return 0, errors.New("lock doesn't exists")
 			}
+			if !bytes.Equal(sub.Primary, req.PrimaryLock) {
+				return 0, errors.New("heartbeat on non-primary key")
+			}
+			if sub.TTL < uint32(req.AdviseLockTtl) {
+				sub.TTL = uint32(req.AdviseLockTtl)
+				shared := *lock
+				_, _ = shared.RemoveSharedLock(req.StartVersion)
+				shared.PutSharedLock(sub)
+				batch := store.dbWriter.NewWriteBatch(req.StartVersion, 0, reqCtx.rpcCtx)
+				batch.PessimisticLock(req.PrimaryLock, &shared)
+				err = store.dbWriter.Write(batch)
+				if err != nil {
+					return 0, err
+				}
+			}
+			return uint64(sub.TTL), nil
 		}
-		return uint64(lock.TTL), nil
+		if lock.StartTS == req.StartVersion {
+			if !bytes.Equal(lock.Primary, req.PrimaryLock) {
+				return 0, errors.New("heartbeat on non-primary key")
+			}
+			if lock.TTL < uint32(req.AdviseLockTtl) {
+				lock.TTL = uint32(req.AdviseLockTtl)
+				batch := store.dbWriter.NewWriteBatch(req.StartVersion, 0, reqCtx.rpcCtx)
+				batch.PessimisticLock(req.PrimaryLock, lock)
+				err = store.dbWriter.Write(batch)
+				if err != nil {
+					return 0, err
+				}
+			}
+			return uint64(lock.TTL), nil
+		}
 	}
 	return 0, errors.New("lock doesn't exists")
 }
@@ -502,7 +607,43 @@ func (store *MVCCStore) CheckTxnStatus(reqCtx *requestCtx,
 	defer regCtx.ReleaseLatches(hashVals)
 	lock := store.getLock(reqCtx, req.PrimaryKey)
 	batch := store.dbWriter.NewWriteBatch(req.LockTs, 0, reqCtx.rpcCtx)
-	if lock != nil && lock.StartTS == req.LockTs {
+	wb := batch.(*writeBatch)
+	if lock != nil && (lock.IsSharedLock() && lock.ContainsStartTS(req.LockTs) || !lock.IsSharedLock() && lock.StartTS == req.LockTs) {
+		if lock.IsSharedLock() {
+			sub, ok := lock.GetSharedLock(req.LockTs)
+			if !ok {
+				return TxnStatus{}, kverrors.ErrLockNotFound
+			}
+			if !bytes.Equal(req.PrimaryKey, sub.Primary) {
+				return TxnStatus{}, &kverrors.ErrPrimaryMismatch{
+					Key:  req.PrimaryKey,
+					Lock: lock,
+				}
+			}
+
+			// If the lock has already outdated, clean up it.
+			if uint64(oracle.ExtractPhysical(sub.StartTS))+uint64(sub.TTL) < uint64(oracle.ExtractPhysical(req.CurrentTs)) {
+				shared := *lock
+				_, _ = shared.RemoveSharedLock(req.LockTs)
+				// If the resolving lock and primary lock are both pessimistic type, just pessimistic rollback locks.
+				if req.ResolvingPessimisticLock && sub.Op == uint8(kvrpcpb.Op_PessimisticLock) {
+					batch.PessimisticRollback(req.PrimaryKey)
+					if len(shared.SharedLocks) > 0 {
+						overrideLastLockDeleteWithSet(wb, req.PrimaryKey, shared.MarshalBinary())
+					}
+					return TxnStatus{0, kvrpcpb.Action_TTLExpirePessimisticRollback, nil}, store.dbWriter.Write(batch)
+				}
+				batch.Rollback(req.PrimaryKey, true)
+				if len(shared.SharedLocks) > 0 {
+					overrideLastLockDeleteWithSet(wb, req.PrimaryKey, shared.MarshalBinary())
+				}
+				return TxnStatus{0, kvrpcpb.Action_TTLExpireRollback, nil}, store.dbWriter.Write(batch)
+			}
+
+			// For shared locks, just return the wrapper lock info.
+			return TxnStatus{0, kvrpcpb.Action_NoAction, lock.ToLockInfo(req.PrimaryKey)}, nil
+		}
+
 		if !bytes.Equal(req.PrimaryKey, lock.Primary) {
 			return TxnStatus{}, &kverrors.ErrPrimaryMismatch{
 				Key:  req.PrimaryKey,
@@ -599,7 +740,15 @@ func (store *MVCCStore) CheckSecondaryLocks(reqCtx *requestCtx, keys [][]byte, s
 	locks := make([]*kvrpcpb.LockInfo, 0, len(keys))
 	for i, key := range keys {
 		lock := store.getLock(reqCtx, key)
-		if !(lock != nil && lock.StartTS == startTS) {
+		hasLock := false
+		if lock != nil {
+			if lock.IsSharedLock() {
+				hasLock = lock.ContainsStartTS(startTS)
+			} else {
+				hasLock = lock.StartTS == startTS
+			}
+		}
+		if !hasLock {
 			commitTS, err := store.checkCommitted(reqCtx.getDBReader(), key, startTS)
 			if err != nil {
 				return SecondaryLocksStatus{}, err
@@ -616,6 +765,10 @@ func (store *MVCCStore) CheckSecondaryLocks(reqCtx *requestCtx, keys [][]byte, s
 				err = store.dbWriter.Write(batch)
 			}
 			return SecondaryLocksStatus{commitTS: 0}, err
+		}
+		if lock != nil && lock.IsSharedLock() {
+			locks = append(locks, lock.ToLockInfo(key))
+			continue
 		}
 		if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) {
 			batch.Rollback(key, true)
@@ -868,13 +1021,39 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 			return kverrors.ErrInvalidOp{Op: m.Op}
 		}
 		lock := store.getLock(reqCtx, m.Key)
+		if lock != nil && lock.IsSharedLock() && m.Op != kvrpcpb.Op_SharedLock {
+			return kverrors.BuildLockErr(m.Key, lock)
+		}
+		if lock != nil && !lock.IsSharedLock() && m.Op == kvrpcpb.Op_SharedLock {
+			return kverrors.BuildLockErr(m.Key, lock)
+		}
 		isPessimisticLock := len(req.PessimisticActions) > 0 && req.PessimisticActions[i] == kvrpcpb.PrewriteRequest_DO_PESSIMISTIC_CHECK
 		needConstraintCheck := len(req.PessimisticActions) > 0 && req.PessimisticActions[i] == kvrpcpb.PrewriteRequest_DO_CONSTRAINT_CHECK
-		lockExists := lock != nil
-		lockMatch := lockExists && lock.StartTS == startTS
+		isSharedMutation := m.Op == kvrpcpb.Op_SharedLock
+		var lockExists bool
+		var lockMatch bool
+		var lockForUpdateTS uint64
+		var lockOp uint8
+		var lockTTL uint32
+		if lock != nil && isSharedMutation {
+			sub, ok := lock.GetSharedLock(startTS)
+			lockExists = ok
+			lockMatch = ok
+			lockForUpdateTS = sub.ForUpdateTS
+			lockOp = sub.Op
+			lockTTL = sub.TTL
+		} else {
+			lockExists = lock != nil
+			lockMatch = lockExists && lock.StartTS == startTS
+			if lockExists {
+				lockForUpdateTS = lock.ForUpdateTS
+				lockOp = lock.Op
+				lockTTL = lock.TTL
+			}
+		}
 		lockConstraintPasses := true
 		if expectedForUpdateTS, ok := expectedForUpdateTSMap[i]; ok {
-			if lock.ForUpdateTS != expectedForUpdateTS {
+			if lockForUpdateTS != expectedForUpdateTS {
 				lockConstraintPasses = false
 			}
 		}
@@ -883,13 +1062,13 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 			if !valid {
 				return errors.New("pessimistic lock not found")
 			}
-			if lock.Op != uint8(kvrpcpb.Op_PessimisticLock) {
+			if lockOp != uint8(kvrpcpb.Op_PessimisticLock) {
 				// Duplicated command.
 				return nil
 			}
 			// Do not overwrite lock ttl if prewrite ttl smaller than pessimisitc lock ttl
-			if uint64(lock.TTL) > req.LockTtl {
-				req.LockTtl = uint64(lock.TTL)
+			if uint64(lockTTL) > req.LockTtl {
+				req.LockTtl = uint64(lockTTL)
 			}
 		} else if needConstraintCheck {
 			item, err := txn.Get(m.Key)
@@ -915,8 +1094,11 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 			if !valid {
 				// Safe to set TTL to zero because the transaction of the lock is committed
 				// or rollbacked or must be rollbacked.
-				lock.TTL = 0
-				return kverrors.BuildLockErr(m.Key, lock)
+				if lock != nil {
+					lock.TTL = 0
+					return kverrors.BuildLockErr(m.Key, lock)
+				}
+				return errors.New("lock conflict")
 			}
 			if lockMatch {
 				// Duplicate command.
@@ -934,6 +1116,14 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 
 func (store *MVCCStore) prewriteMutations(reqCtx *requestCtx, mutations []*kvrpcpb.Mutation,
 	req *kvrpcpb.PrewriteRequest, items []*badger.Item) error {
+	if req.UseAsyncCommit || req.TryOnePc {
+		for _, m := range mutations {
+			if m.Op == kvrpcpb.Op_SharedLock {
+				return errors.New("shared lock prewrite cannot use async commit or 1pc")
+			}
+		}
+	}
+
 	var minCommitTS uint64
 	if req.UseAsyncCommit || req.TryOnePc {
 		// Get minCommitTS for async commit protocol. After all keys are locked in memory lock.
@@ -976,7 +1166,27 @@ func (store *MVCCStore) prewriteMutations(reqCtx *requestCtx, mutations []*kvrpc
 		if err1 != nil {
 			return err1
 		}
-		batch.Prewrite(m.Key, lock)
+		if m.Op == kvrpcpb.Op_SharedLock {
+			existing := store.getLock(reqCtx, m.Key)
+			var shared mvcc.Lock
+			if existing == nil {
+				shared = mvcc.Lock{
+					LockHdr: mvcc.LockHdr{
+						Op: uint8(kvrpcpb.Op_SharedLock),
+					},
+					SharedLocks: make(map[uint64]mvcc.Lock),
+				}
+			} else {
+				shared = *existing
+				if !shared.IsSharedLock() {
+					return errors.New("shared lock prewrite requires existing shared lock wrapper")
+				}
+			}
+			shared.PutSharedLock(*lock)
+			batch.Prewrite(m.Key, &shared)
+		} else {
+			batch.Prewrite(m.Key, lock)
+		}
 	}
 
 	return store.dbWriter.Write(batch)
@@ -1177,7 +1387,11 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 		}
 	}
 	var err error
-	lock.Op = uint8(m.Op)
+	if m.Op == kvrpcpb.Op_SharedLock {
+		lock.Op = uint8(kvrpcpb.Op_Lock)
+	} else {
+		lock.Op = uint8(m.Op)
+	}
 	if lock.Op == uint8(kvrpcpb.Op_Insert) {
 		if item != nil && item.ValueSize() > 0 {
 			return nil, &kverrors.ErrKeyAlreadyExists{Key: m.Key}
@@ -1219,6 +1433,17 @@ func (store *MVCCStore) checkConflictInLockStore(
 		return nil, nil
 	}
 	lock := mvcc.DecodeLock(req.buf)
+	if lock.IsSharedLock() {
+		if mutation.Op == kvrpcpb.Op_SharedLock {
+			if lock.ContainsStartTS(startTS) {
+				// Same ts, no need to overwrite.
+				return &lock, nil
+			}
+			// Multiple shared locks can coexist.
+			return nil, nil
+		}
+		return nil, kverrors.BuildLockErr(mutation.Key, &lock)
+	}
 	if lock.StartTS == startTS {
 		// Same ts, no need to overwrite.
 		return &lock, nil
@@ -1235,6 +1460,7 @@ func (store *MVCCStore) Commit(req *requestCtx, keys [][]byte, startTS, commitTS
 	regCtx := req.regCtx
 	hashVals := keysToHashVals(keys...)
 	batch := store.dbWriter.NewWriteBatch(startTS, commitTS, req.rpcCtx)
+	wb := batch.(*writeBatch)
 	regCtx.AcquireLatches(hashVals)
 	defer regCtx.ReleaseLatches(hashVals)
 
@@ -1252,7 +1478,11 @@ func (store *MVCCStore) Commit(req *requestCtx, keys [][]byte, startTS, commitTS
 			lockErr = kverrors.ErrLockNotFound
 		} else {
 			lock = mvcc.DecodeLock(buf)
-			if lock.StartTS != startTS {
+			if lock.IsSharedLock() {
+				if !lock.ContainsStartTS(startTS) {
+					lockErr = kverrors.ErrReplaced
+				}
+			} else if lock.StartTS != startTS {
 				lockErr = kverrors.ErrReplaced
 			}
 		}
@@ -1267,19 +1497,44 @@ func (store *MVCCStore) Commit(req *requestCtx, keys [][]byte, startTS, commitTS
 				zap.Binary("key", key), zap.Uint64("start ts", startTS), zap.String("lock", fmt.Sprintf("%v", lock)), zap.Error(lockErr))
 			return lockErr
 		}
-		if commitTS < lock.MinCommitTS {
-			log.Info("trying to commit with smaller commitTs than minCommitTs",
-				zap.Uint64("commit ts", commitTS), zap.Uint64("min commit ts", lock.MinCommitTS), zap.Binary("key", key))
-			return &kverrors.ErrCommitExpire{
-				StartTs:     startTS,
-				CommitTs:    commitTS,
-				MinCommitTs: lock.MinCommitTS,
-				Key:         key,
+		if lock.IsSharedLock() {
+			sub, ok := lock.GetSharedLock(startTS)
+			if !ok {
+				return kverrors.ErrReplaced
 			}
+			if commitTS < sub.MinCommitTS {
+				log.Info("trying to commit with smaller commitTs than minCommitTs",
+					zap.Uint64("commit ts", commitTS), zap.Uint64("min commit ts", sub.MinCommitTS), zap.Binary("key", key))
+				return &kverrors.ErrCommitExpire{
+					StartTs:     startTS,
+					CommitTs:    commitTS,
+					MinCommitTs: sub.MinCommitTS,
+					Key:         key,
+				}
+			}
+			isPessimisticTxn = sub.ForUpdateTS > 0
+			tmpDiff += len(key) + len(sub.Value)
+			batch.Commit(key, &sub)
+			shared := lock
+			_, _ = shared.RemoveSharedLock(startTS)
+			if len(shared.SharedLocks) > 0 {
+				overrideLastLockDeleteWithSet(wb, key, shared.MarshalBinary())
+			}
+		} else {
+			if commitTS < lock.MinCommitTS {
+				log.Info("trying to commit with smaller commitTs than minCommitTs",
+					zap.Uint64("commit ts", commitTS), zap.Uint64("min commit ts", lock.MinCommitTS), zap.Binary("key", key))
+				return &kverrors.ErrCommitExpire{
+					StartTs:     startTS,
+					CommitTs:    commitTS,
+					MinCommitTs: lock.MinCommitTS,
+					Key:         key,
+				}
+			}
+			isPessimisticTxn = lock.ForUpdateTS > 0
+			tmpDiff += len(key) + len(lock.Value)
+			batch.Commit(key, &lock)
 		}
-		isPessimisticTxn = lock.ForUpdateTS > 0
-		tmpDiff += len(key) + len(lock.Value)
-		batch.Commit(key, &lock)
 	}
 	atomic.AddInt64(regCtx.Diff(), int64(tmpDiff))
 	err := store.dbWriter.Write(batch)
@@ -1306,6 +1561,23 @@ func (store *MVCCStore) handleLockNotFound(reqCtx *requestCtx, key []byte, start
 		return nil
 	}
 	return kverrors.ErrLockNotFound
+}
+
+func overrideLastLockDeleteWithSet(wb *writeBatch, key []byte, val []byte) {
+	if wb == nil {
+		return
+	}
+	n := len(wb.lockBatch.entries)
+	if n == 0 {
+		return
+	}
+	last := wb.lockBatch.entries[n-1]
+	if len(last.UserMeta) == 0 || last.UserMeta[0] != mvcc.LockUserMetaDeleteByte || !bytes.Equal(last.Key.UserKey, key) {
+		// The batch API always appends the delete entry last, so this should never happen.
+		return
+	}
+	wb.lockBatch.entries = wb.lockBatch.entries[:n-1]
+	wb.lockBatch.set(key, val)
 }
 
 const (
@@ -1357,6 +1629,26 @@ func (store *MVCCStore) rollbackKeyReadLock(reqCtx *requestCtx, batch mvcc.Write
 	hasLock := len(reqCtx.buf) > 0
 	if hasLock {
 		lock := mvcc.DecodeLock(reqCtx.buf)
+		if lock.IsSharedLock() {
+			if lock.ContainsStartTS(startTS) {
+				sub, ok := lock.GetSharedLock(startTS)
+				if !ok {
+					return rollbackStatusNewLock, nil
+				}
+				if currentTs > 0 && uint64(oracle.ExtractPhysical(sub.StartTS))+uint64(sub.TTL) >= uint64(oracle.ExtractPhysical(currentTs)) {
+					return rollbackStatusLocked, kverrors.BuildLockErr(key, &lock)
+				}
+				batch.Rollback(key, true)
+				shared := lock
+				_, _ = shared.RemoveSharedLock(startTS)
+				if len(shared.SharedLocks) > 0 {
+					overrideLastLockDeleteWithSet(batch.(*writeBatch), key, shared.MarshalBinary())
+				}
+				return rollbackStatusDone, nil
+			}
+			// The key is locked by other transactions, go to DB to check if the key is committed.
+			return rollbackStatusNewLock, nil
+		}
 		if lock.StartTS < startTS {
 			// The lock is old, means this is written by an old transaction, and the current transaction may not arrive.
 			// We should write a rollback lock.
@@ -1590,6 +1882,23 @@ func (store *MVCCStore) Cleanup(reqCtx *requestCtx, key []byte, startTS, current
 
 func (store *MVCCStore) appendScannedLock(locks []*kvrpcpb.LockInfo, it *lockstore.Iterator, maxTS uint64) []*kvrpcpb.LockInfo {
 	lock := mvcc.DecodeLock(it.Value())
+	if lock.IsSharedLock() {
+		filtered := mvcc.Lock{
+			LockHdr: mvcc.LockHdr{
+				Op: uint8(kvrpcpb.Op_SharedLock),
+			},
+			SharedLocks: make(map[uint64]mvcc.Lock),
+		}
+		for _, sub := range lock.SharedLocks {
+			if sub.StartTS <= maxTS {
+				filtered.PutSharedLock(sub)
+			}
+		}
+		if len(filtered.SharedLocks) > 0 {
+			locks = append(locks, filtered.ToLockInfo(slices.Clone(it.Key())))
+		}
+		return locks
+	}
 	if lock.StartTS <= maxTS {
 		locks = append(locks, lock.ToLockInfo(slices.Clone(it.Key())))
 	}
@@ -1605,6 +1914,13 @@ func (store *MVCCStore) scanPessimisticLocks(reqCtx *requestCtx, startTS uint64,
 			return locks, nil
 		}
 		lock := mvcc.DecodeLock(it.Value())
+		if lock.IsSharedLock() {
+			sub, ok := lock.GetSharedLock(startTS)
+			if ok && sub.Op == uint8(kvrpcpb.Op_PessimisticLock) && sub.ForUpdateTS <= forUpdateTS {
+				locks = append(locks, lock.ToLockInfo(slices.Clone(it.Key())))
+			}
+			continue
+		}
 		if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) && lock.StartTS == startTS && lock.ForUpdateTS <= forUpdateTS {
 			locks = append(locks, lock.ToLockInfo(slices.Clone(it.Key())))
 		}
@@ -1651,7 +1967,11 @@ func (store *MVCCStore) ResolveLock(reqCtx *requestCtx, lockKeys [][]byte, start
 				break
 			}
 			lock := mvcc.DecodeLock(it.Value())
-			if lock.StartTS != startTS {
+			if lock.IsSharedLock() {
+				if !lock.ContainsStartTS(startTS) {
+					continue
+				}
+			} else if lock.StartTS != startTS {
 				continue
 			}
 			lockKeys = append(lockKeys, safeCopy(it.Key()))
@@ -1662,6 +1982,7 @@ func (store *MVCCStore) ResolveLock(reqCtx *requestCtx, lockKeys [][]byte, start
 	}
 	hashVals := keysToHashVals(lockKeys...)
 	batch := store.dbWriter.NewWriteBatch(startTS, commitTS, reqCtx.rpcCtx)
+	wb := batch.(*writeBatch)
 
 	regCtx.AcquireLatches(hashVals)
 	defer regCtx.ReleaseLatches(hashVals)
@@ -1674,6 +1995,24 @@ func (store *MVCCStore) ResolveLock(reqCtx *requestCtx, lockKeys [][]byte, start
 			continue
 		}
 		lock := mvcc.DecodeLock(buf)
+		if lock.IsSharedLock() {
+			sub, ok := lock.GetSharedLock(startTS)
+			if !ok {
+				continue
+			}
+			shared := lock
+			_, _ = shared.RemoveSharedLock(startTS)
+			if commitTS > 0 {
+				tmpDiff += len(lockKey) + len(sub.Value)
+				batch.Commit(lockKey, &sub)
+			} else {
+				batch.Rollback(lockKey, true)
+			}
+			if len(shared.SharedLocks) > 0 {
+				overrideLastLockDeleteWithSet(wb, lockKey, shared.MarshalBinary())
+			}
+			continue
+		}
 		if lock.StartTS != startTS {
 			continue
 		}
