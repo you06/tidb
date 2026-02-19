@@ -64,7 +64,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -6537,19 +6536,10 @@ func (e *executor) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err e
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("partition mode")
 	}
 
-	succ, err := checkCacheTableSize(e.store, t.Meta().ID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if !succ {
-		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
-	}
-
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	ddlQuery, _ := sctx.Value(sessionctx.QueryString).(string)
-	// Initialize the cached table meta lock info in `mysql.table_cache_meta`.
-	// The operation shouldn't fail in most cases, and if it does, return the error directly.
-	// This DML and the following DDL is not atomic, that's not a problem.
+	// Register the table ID in mysql.table_cache_meta so the invalidation
+	// poller knows which tables are cached.
 	_, _, err = sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil,
 		"replace into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
 	if err != nil {
@@ -6571,41 +6561,6 @@ func (e *executor) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err e
 	}
 
 	return e.doDDLJob2(sctx, job, &model.EmptyArgs{})
-}
-
-func checkCacheTableSize(store kv.Storage, tableID int64) (bool, error) {
-	const cacheTableSizeLimit = 64 * (1 << 20) // 64M
-	succ := true
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnCacheTable)
-	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		txn.SetOption(kv.RequestSourceType, kv.InternalTxnCacheTable)
-		prefix := tablecodec.GenTablePrefix(tableID)
-		it, err := txn.Iter(prefix, prefix.PrefixNext())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer it.Close()
-
-		totalSize := 0
-		for it.Valid() && it.Key().HasPrefix(prefix) {
-			key := it.Key()
-			value := it.Value()
-			totalSize += len(key)
-			totalSize += len(value)
-
-			if totalSize > cacheTableSizeLimit {
-				succ = false
-				break
-			}
-
-			err = it.Next()
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-		return nil
-	})
-	return succ, err
 }
 
 func (e *executor) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error) {

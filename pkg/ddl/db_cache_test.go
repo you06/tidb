@@ -16,7 +16,6 @@ package ddl_test
 
 import (
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -109,67 +108,6 @@ func TestAlterTableCache(t *testing.T) {
 	tk.MustExec("create table t3 like t")
 	checkTableCacheStatus(t, tk, "test", "t", model.TableCacheStatusEnable)
 	checkTableCacheStatus(t, tk, "test", "t3", model.TableCacheStatusDisable)
-}
-
-func TestCacheTableSizeLimit(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists cache_t1")
-	tk.MustExec("create table cache_t1 (c1 int, c varchar(1024))")
-	tk.MustExec("create table cache_t2 (c1 int, c varchar(1024))")
-	tk.MustExec("create table tmp (c1 int, c varchar(1024))")
-	defer tk.MustExec("drop table if exists cache_t1")
-
-	for i := range 64 {
-		tk.MustExec("insert into tmp values (?, repeat('x', 1024));", i)
-	}
-
-	// Make the cache_t1 size large than 64K
-	for i := range 1024 {
-		tk.MustExec("insert into cache_t1 select * from tmp;")
-		if i == 900 {
-			tk.MustExec("insert into cache_t2 select * from cache_t1;")
-		}
-	}
-	// Check 'alter table cache' fail
-	tk.MustGetErrCode("alter table cache_t1 cache", errno.ErrOptOnCacheTable)
-
-	// Check 'alter table cache' success
-	tk.MustExec("alter table cache_t2 cache")
-
-	// But after continuously insertion, the table reachs the size limit
-	for range 124 {
-		_, err := tk.Exec("insert into cache_t2 select * from tmp;")
-		// The size limit check is not accurate, so it's not detected here.
-		require.NoError(t, err)
-	}
-
-	lastReadFromCache := func(tk *testkit.TestKit) bool {
-		return tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache
-	}
-
-	cached := false
-	for range 200 {
-		tk.MustQuery("select count(*) from (select * from cache_t2 limit 1) t1").Check(testkit.Rows("1"))
-		if lastReadFromCache(tk) {
-			cached = true
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-
-	// require.True(t, cached)
-	if !cached {
-		// cached should be true, but it depends on the hardward.
-		// If the CI environment is too slow, 200 iteration would not be enough,
-		// check the result makes this test unstable, so skip the following.
-		return
-	}
-
-	// Forbit the insert once the table size limit is detected.
-	tk.MustGetErrCode("insert into cache_t2 select * from tmp;", errno.ErrOptOnCacheTable)
 }
 
 func TestIssue34069(t *testing.T) {

@@ -1058,9 +1058,9 @@ func (w *worker) runOneJobStep(
 	case model.ActionDropResourceGroup:
 		ver, err = onDropResourceGroup(jobCtx, job)
 	case model.ActionAlterCacheTable:
-		ver, err = onAlterCacheTable(jobCtx, job)
+		ver, err = w.onAlterCacheTable(jobCtx, job)
 	case model.ActionAlterNoCacheTable:
-		ver, err = onAlterNoCacheTable(jobCtx, job)
+		ver, err = w.onAlterNoCacheTable(jobCtx, job)
 	case model.ActionFlashbackCluster:
 		ver, err = w.onFlashbackCluster(jobCtx, job)
 	case model.ActionMultiSchemaChange:

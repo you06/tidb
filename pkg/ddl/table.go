@@ -30,6 +30,7 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
@@ -1654,7 +1655,7 @@ func updateLabelRules(job *model.Job, tblInfo *model.TableInfo, oldRules map[str
 	return infosync.UpdateLabelRules(context.TODO(), patch)
 }
 
-func onAlterCacheTable(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+func (w *worker) onAlterCacheTable(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	tbInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -1688,6 +1689,11 @@ func onAlterCacheTable(jobCtx *jobContext, job *model.Job) (ver int64, err error
 		if err != nil {
 			return ver, err
 		}
+		// Register the table in the in-memory cache so reads can be served
+		// from the CacheDB.
+		if c, ok := jobCtx.store.GetMemCache().(*kv.CacheDB); ok {
+			c.RegisterCachedTable(job.TableID)
+		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	default:
@@ -1697,7 +1703,7 @@ func onAlterCacheTable(jobCtx *jobContext, job *model.Job) (ver int64, err error
 	return ver, err
 }
 
-func onAlterNoCacheTable(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+func (w *worker) onAlterNoCacheTable(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	tbInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -1722,6 +1728,18 @@ func onAlterNoCacheTable(jobCtx *jobContext, job *model.Job) (ver int64, err err
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tbInfo, true)
 		if err != nil {
 			return ver, err
+		}
+		// Unregister and clear the in-memory cache for this table.
+		if c, ok := jobCtx.store.GetMemCache().(*kv.CacheDB); ok {
+			c.UnregisterCachedTable(job.TableID)
+			c.Delete(job.TableID)
+		}
+		// Clean up any remaining invalidation entries.
+		_, err = w.sess.Execute(jobCtx.stepCtx,
+			fmt.Sprintf("delete from mysql.table_cache_invalidation where tid = %d", job.TableID),
+			"alter-nocache-cleanup")
+		if err != nil {
+			return ver, errors.Trace(err)
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
