@@ -4648,6 +4648,15 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *physicalop.PhysicalInd
 	if e.table.Meta().TempTableType != model.TempTableNone {
 		e.dummy = true
 	}
+
+	if e.table.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+		if cacheDB, ok := b.ctx.GetStore().GetMemCache().(*kv.CacheDB); ok && cacheDB != nil {
+			e.isCachedTable = true
+			e.cacheDB = cacheDB
+			e.rowDecoder = NewRowDecoder(b.ctx, v.Schema(), e.table.Meta())
+		}
+	}
+
 	return e, nil
 }
 

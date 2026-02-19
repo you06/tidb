@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
@@ -541,6 +542,12 @@ type IndexLookUpExecutor struct {
 
 	// Whether to push down the index lookup to TiKV
 	indexLookUpPushDown bool
+
+	// Cache support for cached tables: intercept table lookups to use
+	// CacheDB before sending cop requests to TiKV.
+	isCachedTable bool
+	cacheDB       *kv.CacheDB
+	rowDecoder    *rowcodec.ChunkDecoder
 }
 
 type kvRangesWithPhysicalTblID struct {
@@ -1839,6 +1846,16 @@ func getDatumRow(r *chunk.Row, fields []*types.FieldType) []types.Datum {
 // executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
 // Then we hold the returning rows and finish this task.
 func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) error {
+	// Try cache path for cached tables: look up row data from CacheDB
+	// before sending cop requests to TiKV.
+	if w.idxLookup.isCachedTable && w.idxLookup.cacheDB != nil &&
+		len(task.handles) > 0 && w.checkIndexValue == nil {
+		if err := w.executeCachedTask(ctx, task); err == nil {
+			return nil
+		}
+		// Fall through to cop path on cache error.
+	}
+
 	tableReader, err := w.idxLookup.buildTableReader(ctx, task)
 	task.buildDoneTime = time.Now()
 	if err != nil {
@@ -1946,6 +1963,135 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				nil,
 				//missRecords,
 			)
+		}
+	}
+
+	return nil
+}
+
+// executeCachedTask executes a table lookup task using CacheDB instead of cop
+// requests. It converts handles to row keys, looks them up via
+// BatchCachedUnionGet (which checks the cache and falls back to snapshot point
+// reads for misses), and decodes the raw KV values into chunk rows.
+func (w *tableWorker) executeCachedTask(ctx context.Context, task *lookupTableTask) error {
+	e := w.idxLookup
+	if e.cacheDB == nil || e.rowDecoder == nil {
+		return errors.New("cache not configured")
+	}
+
+	// Determine physical table ID.
+	var physicalTableID int64
+	if e.partitionTableMode && task.partitionTable != nil {
+		physicalTableID = task.partitionTable.GetPhysicalID()
+	} else {
+		physicalTableID = getPhysicalTableID(e.table)
+	}
+
+	// Build row keys from handles.
+	rowKeys := make([]kv.Key, len(task.handles))
+	for i, handle := range task.handles {
+		rowKeys[i] = tablecodec.EncodeRowKeyWithHandle(physicalTableID, handle)
+	}
+
+	// Get snapshot at the read timestamp.
+	snapshot := e.storage.GetSnapshot(kv.Version{Ver: e.startTS})
+
+	// Batch lookup from cache (with snapshot fallback for misses).
+	results, err := e.cacheDB.BatchCachedUnionGet(ctx, physicalTableID, e.startTS, snapshot, rowKeys)
+	if err != nil {
+		return err
+	}
+
+	task.buildDoneTime = time.Now()
+
+	// Decode results into chunk rows.
+	handleCnt := len(task.handles)
+	chk := chunk.New(exec.RetTypes(e), 0, handleCnt)
+
+	for _, handle := range task.handles {
+		key := tablecodec.EncodeRowKeyWithHandle(physicalTableID, handle)
+		val, ok := results[string(key)]
+		if !ok {
+			continue // row was deleted between index scan and table lookup
+		}
+
+		// Only handle new row format; fall back to cop for old format.
+		if !rowcodec.IsNewFormat(val) {
+			return errors.New("old row format in cached table")
+		}
+
+		if err := e.rowDecoder.DecodeToChunk(val, 0, handle, chk); err != nil {
+			return err
+		}
+	}
+
+	// Collect rows from chunk.
+	task.rows = make([]chunk.Row, 0, handleCnt)
+	iter := chunk.NewIterator4Chunk(chk)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		task.rows = append(task.rows, row)
+	}
+
+	// Memory tracking.
+	task.memTracker = w.memTracker
+	var memUsage int64
+	memUsage += int64(cap(task.handles)) * size.SizeOfInterface
+	for _, h := range task.handles {
+		memUsage += int64(h.MemUsage())
+	}
+	if task.indexOrder != nil {
+		memUsage += task.indexOrder.MemUsage()
+	}
+	if task.duplicatedIndexOrder != nil {
+		memUsage += task.duplicatedIndexOrder.MemUsage()
+	}
+	memUsage += task.idxRows.MemoryUsage()
+	memUsage += chk.MemoryUsage()
+	memUsage += int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
+	task.memUsage = memUsage
+	task.memTracker.Consume(memUsage)
+
+	// Handle keepOrder.
+	defer trace.StartRegion(ctx, "IndexLookUpTableCompute").End()
+	if w.keepOrder {
+		task.rowIdx = make([]int, 0, len(task.rows))
+		for i := range task.rows {
+			handle, err := e.getHandle(task.rows[i], w.handleIdx, e.isCommonHandle(), getHandleFromTable)
+			if err != nil {
+				return err
+			}
+			rowIdx, _ := task.indexOrder.Get(handle)
+			task.rowIdx = append(task.rowIdx, rowIdx.(int))
+		}
+		{
+			idxMem := int64(cap(task.rowIdx)) * int64(size.SizeOfInt)
+			task.memUsage += idxMem
+			task.memTracker.Consume(idxMem)
+		}
+		sort.Sort(task)
+	}
+
+	// Consistency check.
+	if handleCnt != len(task.rows) && !util.HasCancelled(ctx) && !e.weakConsistency {
+		if len(e.tblPlans) == 1 {
+			obtainedHandlesMap := kv.NewHandleMap()
+			for _, row := range task.rows {
+				handle, err := e.getHandle(row, w.handleIdx, e.isCommonHandle(), getHandleFromTable)
+				if err != nil {
+					return err
+				}
+				obtainedHandlesMap.Set(handle, true)
+			}
+			missHds := GetLackHandles(task.handles, obtainedHandlesMap)
+			return (&consistency.Reporter{
+				HandleEncode: func(hd kv.Handle) kv.Key {
+					return tablecodec.EncodeRecordKey(e.table.RecordPrefix(), hd)
+				},
+				Tbl:             e.table.Meta(),
+				Idx:             e.index,
+				EnableRedactLog: e.enableRedactLog,
+				Storage:         e.storage,
+			}).ReportLookupInconsistent(ctx, handleCnt, len(task.rows), missHds, task.handles, nil)
 		}
 	}
 
