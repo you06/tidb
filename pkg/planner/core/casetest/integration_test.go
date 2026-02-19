@@ -399,20 +399,12 @@ func TestIntegrationRegression(t *testing.T) {
 		tk.MustExec("rollback")
 
 		tk.MustExec("alter table t cache")
-		for {
-			tk.MustQuery("select /* issue:33175 */ max(id) from t;").Check(testkit.Rows("10353107668348738101"))
-			if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
-				break
-			}
-		}
+		// Cached tables no longer inject UnionScan, so ReadFromTableCache is
+		// not set for non-point-get queries. Simply verify correctness.
+		tk.MustQuery("select /* issue:33175 */ max(id) from t;").Check(testkit.Rows("10353107668348738101"))
 
 		// With subquery, like the original issue case.
-		for {
-			tk.MustQuery("select /* issue:33175 */ * from t where id > (select  max(id) from t where t.id > 0);").Check(testkit.Rows())
-			if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
-				break
-			}
-		}
+		tk.MustQuery("select /* issue:33175 */ * from t where id > (select  max(id) from t where t.id > 0);").Check(testkit.Rows())
 
 		// Test order by desc / asc.
 		tk.MustQuery("select /* issue:33175 */ id from t order by id desc;").Check(testkit.Rows(

@@ -1192,8 +1192,6 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 		unSupportedReason = "the global index in partition table is not supported"
 	} else if tblInfo.TempTableType != model.TempTableNone {
 		unSupportedReason = "temporary table is not supported"
-	} else if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-		unSupportedReason = "cached table is not supported"
 	} else if index.MVIndex {
 		unSupportedReason = "multi-valued index is not supported"
 	} else if !sessionVars.IsIsolation(ast.RepeatableRead) {

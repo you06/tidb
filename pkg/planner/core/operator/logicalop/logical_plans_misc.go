@@ -17,7 +17,6 @@ package logicalop
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -168,14 +167,6 @@ func CanSelfBeingPushedToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool
 			}
 		}
 		ret = ret && validDs
-
-		if c.TableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-			// Don't push to cop for cached table, it brings more harm than good:
-			// 1. Those tables are small enough, push to cop can't utilize several TiKV to accelerate computation.
-			// 2. Cached table use UnionScan to read the cache data, and push to cop is not supported when an UnionScan exists.
-			// Once aggregation is pushed to cop, the cache data can't be use anymore.
-			return false
-		}
 		return ret
 	case *LogicalUnionAll, *LogicalSort, *LogicalProjection, *LogicalSequence:
 		return storeTp == kv.TiFlash
@@ -227,14 +218,6 @@ func CanPushToCopImpl(lp base.LogicalPlan, storeTp kv.StoreType) bool {
 				}
 			}
 			ret = ret && validDs
-
-			if c.TableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-				// Don't push to cop for cached table, it brings more harm than good:
-				// 1. Those tables are small enough, push to cop can't utilize several TiKV to accelerate computation.
-				// 2. Cached table use UnionScan to read the cache data, and push to cop is not supported when an UnionScan exists.
-				// Once aggregation is pushed to cop, the cache data can't be use anymore.
-				return false
-			}
 		case *LogicalUnionAll:
 			if storeTp != kv.TiFlash {
 				return false

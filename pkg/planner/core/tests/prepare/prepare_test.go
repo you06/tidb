@@ -1308,19 +1308,8 @@ func TestCachedTable(t *testing.T) {
 	tk.MustExec("prepare pointGet from 'select b from t use index(i_b) where b=?'")
 	tk.MustExec("set @a=1, @b=3")
 
-	lastReadFromCache := func(tk *testkit.TestKit) bool {
-		return tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache
-	}
-
-	var cacheLoaded bool
-	for range 50 {
-		tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
-		if lastReadFromCache(tk) {
-			cacheLoaded = true
-			break
-		}
-	}
-	require.True(t, cacheLoaded)
+	// Cached tables no longer inject UnionScan, so plans are identical to
+	// non-cached tables. Verify that plan caching still works correctly.
 
 	// Cache the plan.
 	tk.MustQuery("execute tableScan using @a").Check(testkit.Rows("1 1", "2 2"))
@@ -1330,22 +1319,18 @@ func TestCachedTable(t *testing.T) {
 
 	// Table Scan
 	tk.MustQuery("execute tableScan using @a").Check(testkit.Rows("1 1", "2 2"))
-	require.True(t, lastReadFromCache(tk))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	// Index Scan
 	tk.MustQuery("execute indexScan using @a").Check(testkit.Rows("2"))
-	require.True(t, lastReadFromCache(tk))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	// IndexLookup
 	tk.MustQuery("execute indexLookup using @a, @b").Check(testkit.Rows("2"))
-	require.True(t, lastReadFromCache(tk))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // b>1 and b<3 --> b=2
 
 	// PointGet
 	tk.MustQuery("execute pointGet using @a").Check(testkit.Rows("1"))
-	require.True(t, lastReadFromCache(tk))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 

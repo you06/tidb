@@ -886,17 +886,16 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 		testKit.MustExec("insert into t32157 values ('GDEP0071', '05', '0', '0000', '2016-06-01 00:00:00', 'D')")
 		testKit.MustExec("alter table t32157 cache")
 
+		// Cached tables no longer inject UnionScan, so aggregation can be
+		// pushed to cop normally. Plan is identical to a non-cached table.
 		testKit.MustQuery("explain format = 'brief' select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows(
-			"StreamAgg 1.00 root  funcs:count(1)->Column#9]\n" +
-				"[└─UnionScan 10.00 root  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
-				"[  └─TableReader 10.00 root  data:Selection]\n" +
+			"StreamAgg 1.00 root  funcs:count(Column#11)->Column#9]\n" +
+				"[└─TableReader 1.00 root  data:StreamAgg]\n" +
+				"[  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#11]\n" +
 				"[    └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
 				"[      └─TableFullScan 10000.00 cop[tikv] table:t32157 keep order:false, stats:pseudo"))
 
-		require.Eventually(t, func() bool {
-			testKit.MustQuery("select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows("2"))
-			return testKit.Session().GetSessionVars().StmtCtx.ReadFromTableCache
-		}, 10*time.Second, 500*time.Millisecond)
+		testKit.MustQuery("select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows("2"))
 
 		testKit.MustExec("drop table if exists t31202")
 	})
