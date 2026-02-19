@@ -356,12 +356,10 @@ const (
 		last_analyzed_at TIMESTAMP,
 		PRIMARY KEY (table_id, column_id) CLUSTERED
 	);`
-	// CreateTableCacheMetaTable stores the cached table meta lock information.
+	// CreateTableCacheMetaTable tracks which tables are cached.
+	// Invalidation is handled by mysql.table_cache_invalidation.
 	CreateTableCacheMetaTable = `CREATE TABLE IF NOT EXISTS mysql.table_cache_meta (
 		tid bigint(11) NOT NULL DEFAULT 0,
-		lock_type enum('NONE','READ', 'INTEND', 'WRITE') NOT NULL DEFAULT 'NONE',
-		lease bigint(20) NOT NULL DEFAULT 0,
-		oldReadLease bigint(20) NOT NULL DEFAULT 0,
 		PRIMARY KEY (tid)
 	);`
 	// CreateAnalyzeOptionsTable stores the analyze options used by analyze and auto analyze.

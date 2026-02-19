@@ -1865,6 +1865,62 @@ func TestBindInfoUniqueIndex(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 }
 
+func TestTiDBUpgradeToVer256(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver255 := version255
+	seV255 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver255))
+	require.NoError(t, err)
+	RevertVersionAndVariables(t, seV255, ver255)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	// Add back old columns to simulate the old schema
+	seV255.SetValue(sessionctx.Initing, true)
+	seV255.GetSessionVars().SQLMode = mysql.ModeNone
+	mustExecute(seV255, "ALTER TABLE mysql.table_cache_meta ADD COLUMN lock_type enum('NONE','READ','INTEND','WRITE') NOT NULL DEFAULT 'NONE'")
+	mustExecute(seV255, "ALTER TABLE mysql.table_cache_meta ADD COLUMN lease bigint(20) NOT NULL DEFAULT 0")
+	mustExecute(seV255, "ALTER TABLE mysql.table_cache_meta ADD COLUMN oldReadLease bigint(20) NOT NULL DEFAULT 0")
+
+	// Verify old columns exist
+	getTableCreateSQLFn := func(se sessionapi.Session, tableName string) string {
+		res := MustExecToRecodeSet(t, se, fmt.Sprintf("show create table mysql.%s", tableName))
+		chk := res.NewChunk(nil)
+		err = res.Next(ctx, chk)
+		require.NoError(t, err)
+		require.Equal(t, 1, chk.NumRows())
+		return string(chk.GetRow(0).GetBytes(1))
+	}
+	createSQL := getTableCreateSQLFn(seV255, "table_cache_meta")
+	require.Contains(t, createSQL, "lock_type")
+	require.Contains(t, createSQL, "lease")
+	require.Contains(t, createSQL, "oldReadLease")
+
+	// Upgrade to current version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := GetBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// Verify old columns have been dropped after upgrade
+	createSQL = getTableCreateSQLFn(seCurVer, "table_cache_meta")
+	require.NotContains(t, createSQL, "lock_type")
+	require.NotContains(t, createSQL, "lease")
+	require.NotContains(t, createSQL, "oldReadLease")
+	require.Contains(t, createSQL, "tid")
+}
+
 func TestVersionedBootstrapSchemas(t *testing.T) {
 	// make sure that later change won't affect existing version schemas.
 	require.Len(t, versionedBootstrapSchemas[0].databases[0].Tables, 52)

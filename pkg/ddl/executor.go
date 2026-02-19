@@ -6541,7 +6541,7 @@ func (e *executor) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err e
 	// Register the table ID in mysql.table_cache_meta so the invalidation
 	// poller knows which tables are cached.
 	_, _, err = sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil,
-		"replace into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
+		"replace into mysql.table_cache_meta values (%?)", t.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
