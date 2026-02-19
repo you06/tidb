@@ -405,6 +405,6 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 }
 
 // SetOptionsBeforeCommit sets options before commit.
-func (m *txnManager) SetOptionsBeforeCommit(txn kv.Transaction, commitTSChecker func(uint64) bool) error {
-	return m.ctxProvider.SetOptionsBeforeCommit(txn, commitTSChecker)
+func (m *txnManager) SetOptionsBeforeCommit(txn kv.Transaction) error {
+	return m.ctxProvider.SetOptionsBeforeCommit(txn)
 }

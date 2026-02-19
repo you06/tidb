@@ -153,7 +153,7 @@ type TxnContextProvider interface {
 	// ActivateTxn activates the transaction.
 	ActivateTxn() (kv.Transaction, error)
 	// SetOptionsBeforeCommit is called after execution and before commit, which sets necessary options for the transaction.
-	SetOptionsBeforeCommit(txn kv.Transaction, commitTSChecker func(uint64) bool) error
+	SetOptionsBeforeCommit(txn kv.Transaction) error
 }
 
 // TxnManager is an interface providing txn context management in session
@@ -212,7 +212,7 @@ type TxnManager interface {
 	// GetCurrentStmt returns the current statement node
 	GetCurrentStmt() ast.StmtNode
 	// SetOptionsBeforeCommit is called after execution and before commit, which sets necessary options for the transaction.
-	SetOptionsBeforeCommit(txn kv.Transaction, commitTSChecker func(uint64) bool) error
+	SetOptionsBeforeCommit(txn kv.Transaction) error
 }
 
 // NewTxn starts a new optimistic and active txn, it can be used for the below scenes:

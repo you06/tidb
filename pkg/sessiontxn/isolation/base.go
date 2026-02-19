@@ -557,7 +557,7 @@ func (p *baseTxnContextProvider) SetOptionsOnTxnActive(txn kv.Transaction) {
 }
 
 func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
-	txn kv.Transaction, commitTSChecker func(uint64) bool,
+	txn kv.Transaction,
 ) error {
 	sessVars := p.sctx.GetSessionVars()
 	// Pipelined dml txn already flushed mutations into stores, so we don't need to set options for them.
@@ -571,9 +571,6 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 		}
 		if sessVars.CDCWriteSource != 0 {
 			return errors.New("pipelined dml with CDC source is not allowed")
-		}
-		if commitTSChecker != nil {
-			return errors.New("pipelined dml with commitTS checker is not allowed")
 		}
 		return nil
 	}
@@ -633,10 +630,6 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 		}
 
 		txn.SetOption(kv.TxnSource, txnSource)
-	}
-
-	if commitTSChecker != nil {
-		txn.SetOption(kv.CommitTSUpperBoundCheck, commitTSChecker)
 	}
 
 	// Optimization:

@@ -578,7 +578,7 @@ func (s *session) doCommit(ctx context.Context) error {
 			})
 		}
 	}
-	if err = sessiontxn.GetTxnManager(s).SetOptionsBeforeCommit(s.txn.Transaction, nil); err != nil {
+	if err = sessiontxn.GetTxnManager(s).SetOptionsBeforeCommit(s.txn.Transaction); err != nil {
 		return err
 	}
 

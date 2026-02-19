@@ -157,7 +157,6 @@ func TestSlowLogFormat(t *testing.T) {
 	// the output of the logged CurrentDB should be 'test', should be to lower cased.
 	seVar.CurrentDB = "TeST"
 	seVar.InRestrictedSQL = true
-	seVar.StmtCtx.WaitLockLeaseTime = 1
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
 	execDetail := &execdetails.ExecDetails{
@@ -374,6 +373,7 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.StmtCtx.ResetSQLDigest(sql)
 	seVar.StmtCtx.IndexNames = []string{"t1:a", "t2:b"}
 	seVar.TxnCtx.IsExplicit = logItems.IsExplicitTxn
+	seVar.TxnCtx.CachedTables = map[int64]any{1: nil}
 	seVar.FoundInPlanCache = logItems.PlanFromCache
 	seVar.FoundInBinding = logItems.PlanFromBinding
 	seVar.RewritePhaseInfo = logItems.RewriteInfo

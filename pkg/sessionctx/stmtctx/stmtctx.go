@@ -408,9 +408,6 @@ type StatementContext struct {
 	EnableOptimizerDebugTrace bool
 	OptimizerDebugTrace       any
 
-	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
-	WaitLockLeaseTime time.Duration
-
 	// KvExecCounter is created from SessionVars.StmtStats to count the number of SQL
 	// executions of the kv layer during the current execution of the statement.
 	// Its life cycle is limited to this execution, and a new KvExecCounter is

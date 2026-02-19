@@ -2063,15 +2063,6 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	diskMax := sessVars.DiskTracker.MaxConsumed()
 	stmtDetail, tikvExecDetail, ruDetail := execdetails.GetExecDetailsFromContext(a.GoCtx)
 
-	if stmtCtx.WaitLockLeaseTime > 0 {
-		if execDetail.BackoffSleep == nil {
-			execDetail.BackoffSleep = make(map[string]time.Duration)
-		}
-		execDetail.BackoffSleep["waitLockLeaseForCacheTable"] = stmtCtx.WaitLockLeaseTime
-		execDetail.BackoffTime += stmtCtx.WaitLockLeaseTime
-		execDetail.TimeDetail.WaitTime += stmtCtx.WaitLockLeaseTime
-	}
-
 	var keyspaceID uint32
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {

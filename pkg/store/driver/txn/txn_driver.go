@@ -282,8 +282,6 @@ func (txn *tikvTxn) SetOption(opt int, val any) {
 		txn.KVTxn.SetKVFilter(val.(tikv.KVFilter))
 	case kv.SnapInterceptor:
 		txn.snapshotInterceptor = val.(kv.SnapshotInterceptor)
-	case kv.CommitTSUpperBoundCheck:
-		txn.KVTxn.SetCommitTSUpperBoundCheck(val.(func(commitTS uint64) bool))
 	case kv.RPCInterceptor:
 		txn.KVTxn.AddRPCInterceptor(val.(interceptor.RPCInterceptor))
 	case kv.AssertionLevel:
