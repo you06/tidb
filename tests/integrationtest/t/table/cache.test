@@ -118,3 +118,88 @@ select * from cache_add_column use index(k) where f1 = 1;
 alter table cache_add_column nocache;
 drop table cache_add_column;
 
+# TestCacheTableExplainNoUnionScan
+# Verify that EXPLAIN for cached table queries shows no UnionScan operator
+drop table if exists cache_explain;
+create table cache_explain (id int primary key, u int unique, v int, key idx_v(v));
+insert into cache_explain values(1, 11, 101), (2, 12, 102), (3, 13, 103);
+alter table cache_explain cache;
+# Point get should show Point_Get, not UnionScan
+explain select * from cache_explain where id = 1;
+# Batch point get should show Batch_Point_Get, not UnionScan
+explain select * from cache_explain where id in (1, 2);
+# Unique key point get
+explain select * from cache_explain where u = 11;
+# Full table scan goes to TiKV (no cache for scans)
+explain select * from cache_explain;
+# Range scan goes to TiKV (no cache for range scans)
+explain select * from cache_explain where id > 1;
+# Index lookup
+explain select * from cache_explain where v = 101;
+alter table cache_explain nocache;
+drop table cache_explain;
+
+# TestCacheTableRangeScan
+# Verify range scans and full table scans work correctly on cached table
+drop table if exists cache_range;
+create table cache_range (id int primary key, v int);
+insert into cache_range values(1, 10), (2, 20), (3, 30), (4, 40), (5, 50);
+alter table cache_range cache;
+# Full table scan
+select * from cache_range order by id;
+# Range scan
+select * from cache_range where id > 2 order by id;
+select * from cache_range where id between 2 and 4 order by id;
+alter table cache_range nocache;
+drop table cache_range;
+
+# TestCacheTableLimitPushdown
+# Verify limit pushdown works on cached tables
+drop table if exists cache_limit;
+create table cache_limit (id int primary key, v int);
+insert into cache_limit values(1, 10), (2, 20), (3, 30), (4, 40), (5, 50);
+alter table cache_limit cache;
+select * from cache_limit order by id limit 3;
+select * from cache_limit where id > 1 order by id limit 2;
+# Verify EXPLAIN shows Limit is pushed down
+explain select * from cache_limit order by id limit 3;
+alter table cache_limit nocache;
+drop table cache_limit;
+
+# TestCacheTableIndexLookup
+# Verify index lookup behavior on cached tables
+drop table if exists cache_idx;
+create table cache_idx (id int primary key, a int, b int, key idx_a(a));
+insert into cache_idx values(1, 10, 100), (2, 10, 200), (3, 20, 300), (4, 20, 400);
+alter table cache_idx cache;
+# Index lookup
+select * from cache_idx where a = 10 order by id;
+select * from cache_idx where a = 20 order by id;
+# Index range scan
+select * from cache_idx where a >= 10 and a <= 20 order by id;
+alter table cache_idx nocache;
+drop table cache_idx;
+
+# TestCacheTableLifecycle
+# Verify full ALTER TABLE CACHE / NOCACHE lifecycle
+drop table if exists cache_life;
+create table cache_life (id int primary key, v int);
+insert into cache_life values(1, 100), (2, 200);
+# Initially not cached
+select * from cache_life where id = 1;
+select * from cache_life where id = 2;
+# Enable cache
+alter table cache_life cache;
+select * from cache_life where id = 1;
+select * from cache_life where id = 2;
+# Disable cache
+alter table cache_life nocache;
+select * from cache_life where id = 1;
+select * from cache_life where id = 2;
+# Re-enable cache
+alter table cache_life cache;
+select * from cache_life where id = 1;
+select * from cache_life where id = 2;
+alter table cache_life nocache;
+drop table cache_life;
+

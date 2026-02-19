@@ -78,3 +78,24 @@ alter table cache_t2 nocache;
 alter table cache_t2 cache;
 show warnings;
 Level	Code	Message
+drop table if exists cache_large;
+create table cache_large (id int primary key, data varchar(1000));
+insert into cache_large values(1, repeat('x', 1000));
+insert into cache_large values(2, repeat('y', 1000));
+insert into cache_large values(3, repeat('z', 1000));
+alter table cache_large cache;
+show create table cache_large;
+Table	Create Table
+cache_large	CREATE TABLE `cache_large` (
+  `id` int NOT NULL,
+  `data` varchar(1000) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /* CACHED ON */
+select id, length(data) from cache_large where id = 1;
+id	length(data)
+1	1000
+select id, length(data) from cache_large where id = 2;
+id	length(data)
+2	1000
+alter table cache_large nocache;
+drop table cache_large;

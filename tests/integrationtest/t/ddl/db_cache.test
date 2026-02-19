@@ -78,3 +78,20 @@ alter table cache_t2 nocache;
 alter table cache_t2 cache;
 show warnings;
 
+# TestCacheTableNoSizeLimit
+# Verify there is no 64MB table size limit - large tables can be cached row-by-row
+drop table if exists cache_large;
+create table cache_large (id int primary key, data varchar(1000));
+# Insert rows with large data - no size limit means this should work
+insert into cache_large values(1, repeat('x', 1000));
+insert into cache_large values(2, repeat('y', 1000));
+insert into cache_large values(3, repeat('z', 1000));
+alter table cache_large cache;
+show create table cache_large;
+# Verify point gets work on large rows
+select id, length(data) from cache_large where id = 1;
+select id, length(data) from cache_large where id = 2;
+alter table cache_large nocache;
+drop table cache_large;
+
+
