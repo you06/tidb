@@ -55,6 +55,12 @@ func (l CachedTableLockType) String() string {
 	panic("invalid CachedTableLockType value")
 }
 
+func leaseFromTS(ts uint64, leaseDuration time.Duration) uint64 {
+	physicalTime := oracle.GetTimeFromTS(ts)
+	lease := oracle.GoTimeToTS(physicalTime.Add(leaseDuration))
+	return lease
+}
+
 // StateRemote is the interface to control the remote state of the cached table's lock meta information.
 // IMPORTANT: It's not thread-safe, the caller should be aware of that!
 type StateRemote interface {

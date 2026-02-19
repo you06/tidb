@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
@@ -1080,18 +1079,6 @@ func tableFromMeta(alloc autoid.Allocators, factory func() (pools.Resource, erro
 	ret, err := tables.TableFromMeta(alloc, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if t, ok := ret.(table.CachedTable); ok {
-		var tmp pools.Resource
-		tmp, err = factory()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		err = t.Init(tmp.(sessionctx.Context).GetSQLExecutor())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 	}
 	return ret, nil
 }

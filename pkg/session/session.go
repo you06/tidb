@@ -109,7 +109,6 @@ import (
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/helper"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/table/temptable"
@@ -565,20 +564,8 @@ func (s *session) doCommit(ctx context.Context) error {
 
 	sessVars := s.GetSessionVars()
 
-	var commitTSChecker func(uint64) bool
 	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
-		// OLD PATH: acquire write locks for cached tables (will be removed in WORK11).
-		c := cachedTableRenewLease{tables: tables}
-		now := time.Now()
-		err := c.start(ctx)
-		defer c.stop(ctx)
-		sessVars.StmtCtx.WaitLockLeaseTime += time.Since(now)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		commitTSChecker = c.commitTSCheck
-
-		// NEW PATH: set precommit hook for CacheDB (freecache) invalidation.
+		// Set precommit hook for CacheDB (freecache) invalidation.
 		modifiedKeys := collectCachedTableKeys(s.txn.GetMemBuffer(), tables)
 		if len(modifiedKeys) > 0 {
 			dom := domain.GetDomain(s)
@@ -591,7 +578,7 @@ func (s *session) doCommit(ctx context.Context) error {
 			})
 		}
 	}
-	if err = sessiontxn.GetTxnManager(s).SetOptionsBeforeCommit(s.txn.Transaction, commitTSChecker); err != nil {
+	if err = sessiontxn.GetTxnManager(s).SetOptionsBeforeCommit(s.txn.Transaction, nil); err != nil {
 		return err
 	}
 
@@ -600,49 +587,6 @@ func (s *session) doCommit(ctx context.Context) error {
 		err = s.handleAssertionFailure(ctx, err)
 	}
 	return err
-}
-
-type cachedTableRenewLease struct {
-	tables map[int64]any
-	lease  []uint64 // Lease for each visited cached tables.
-	exit   chan struct{}
-}
-
-func (c *cachedTableRenewLease) start(ctx context.Context) error {
-	c.exit = make(chan struct{})
-	c.lease = make([]uint64, len(c.tables))
-	wg := make(chan error, len(c.tables))
-	ith := 0
-	for _, raw := range c.tables {
-		tbl := raw.(table.CachedTable)
-		go tbl.WriteLockAndKeepAlive(ctx, c.exit, &c.lease[ith], wg)
-		ith++
-	}
-
-	// Wait for all LockForWrite() return, this function can return.
-	var err error
-	for ; ith > 0; ith-- {
-		tmp := <-wg
-		if tmp != nil {
-			err = tmp
-		}
-	}
-	return err
-}
-
-func (c *cachedTableRenewLease) stop(_ context.Context) {
-	close(c.exit)
-}
-
-func (c *cachedTableRenewLease) commitTSCheck(commitTS uint64) bool {
-	for i := range c.lease {
-		lease := atomic.LoadUint64(&c.lease[i])
-		if commitTS >= lease {
-			// Txn fails to commit because the write lease is expired.
-			return false
-		}
-	}
-	return true
 }
 
 // cachedTableLease is the duration to wait after writing invalidation entries,

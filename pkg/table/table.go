@@ -20,7 +20,6 @@ package table
 
 import (
 	"context"
-	"time"
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -35,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
@@ -533,27 +531,6 @@ var TableFromMeta func(allocators autoid.Allocators, tblInfo *model.TableInfo) (
 
 // MockTableFromMeta only serves for test.
 var MockTableFromMeta func(tableInfo *model.TableInfo) Table
-
-// CachedTable is a Table, and it has a UpdateLockForRead() method
-// UpdateLockForRead() according to the reasons for not meeting the read conditions, update the lock information,
-// And at the same time reload data from the original table.
-type CachedTable interface {
-	Table
-
-	Init(exec sqlexec.SQLExecutor) error
-
-	// TryReadFromCache checks if the cache table is readable.
-	TryReadFromCache(ts uint64, leaseDuration time.Duration) (kv.MemBuffer, bool)
-
-	// UpdateLockForRead if you cannot meet the conditions of the read buffer,
-	// you need to update the lock information and read the data from the original table
-	UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration)
-
-	// WriteLockAndKeepAlive first obtain the write lock, then it renew the lease to keep the lock alive.
-	// 'exit' is a channel to tell the keep alive goroutine to exit.
-	// The result is sent to the 'wg' channel.
-	WriteLockAndKeepAlive(ctx context.Context, exit chan struct{}, leasePtr *uint64, wg chan error)
-}
 
 // CheckRowConstraint verify row check constraints.
 func CheckRowConstraint(expCtx exprctx.BuildContext, constraints []*Constraint,
