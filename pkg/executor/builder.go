@@ -5802,11 +5802,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 		b.err = err
 		return nil
 	}
-	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		if cacheTable := b.getCacheTable(plan.TblInfo, snapshotTS); cacheTable != nil {
-			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
-		}
-	}
+	e.snapshot = b.wrapWithCachedSnapshot(e.snapshot, snapshotTS, plan.TblInfo)
 
 	if plan.TblInfo.TempTableType != model.TempTableNone {
 		// Temporary table should not do any lock operations
@@ -6153,6 +6149,20 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 		tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
 	}
 	return nil
+}
+
+// wrapWithCachedSnapshot wraps the given snapshot with a cachedSnapshot if the
+// table has caching enabled. It routes point reads through the global CacheDB
+// with TS-aware per-key invalidation.
+func (b *executorBuilder) wrapWithCachedSnapshot(snapshot kv.Snapshot, snapshotTS uint64, tblInfo *model.TableInfo) kv.Snapshot {
+	if tblInfo.TableCacheStatusType != model.TableCacheStatusEnable {
+		return snapshot
+	}
+	cacheDB, ok := b.ctx.GetStore().GetMemCache().(*kv.CacheDB)
+	if !ok || cacheDB == nil {
+		return snapshot
+	}
+	return newCachedSnapshot(snapshot, cacheDB, snapshotTS, []int64{tblInfo.ID})
 }
 
 func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) exec.Executor {

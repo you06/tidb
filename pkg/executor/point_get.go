@@ -101,11 +101,7 @@ func (b *executorBuilder) buildPointGet(p *physicalop.PointGetPlan) exec.Executo
 		b.err = err
 		return nil
 	}
-	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		if cacheTable := b.getCacheTable(p.TblInfo, snapshotTS); cacheTable != nil {
-			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
-		}
-	}
+	e.snapshot = b.wrapWithCachedSnapshot(e.snapshot, snapshotTS, p.TblInfo)
 
 	if e.lock {
 		b.hasLock = true
