@@ -226,6 +226,33 @@ func TestWriteOnMultipleCachedTable(t *testing.T) {
 	tk.MustExec("alter table ct2 nocache")
 }
 
+func TestCachedTableInvalidationEntries(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ct_inv (id int primary key, v int)")
+	tk.MustExec("alter table ct_inv cache")
+
+	// Write to the cached table, which should trigger the precommit hook
+	// and write invalidation entries to mysql.table_cache_invalidation.
+	tk.MustExec("insert into ct_inv values (1, 10)")
+
+	// Query the invalidation table to verify entries were written.
+	rows := tk.MustQuery("select tid, cache_key, min_cached_ts from mysql.table_cache_invalidation").Rows()
+	// There should be at least one invalidation entry for the insert.
+	require.Greater(t, len(rows), 0, "invalidation entries should be written for cached table writes")
+
+	// Verify the min_cached_ts is non-zero (it should be the commitTS).
+	for _, row := range rows {
+		minCachedTS := row[2].(string)
+		require.NotEqual(t, "0", minCachedTS, "min_cached_ts should be non-zero")
+	}
+
+	// cleanup
+	tk.MustExec("alter table ct_inv nocache")
+}
+
 func TestFixSetTiDBSnapshotTS(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

@@ -247,7 +247,7 @@ func (c *cachedTable) AddRecord(sctx table.MutateContext, txn kv.Transaction, r 
 	return c.TableCommon.AddRecord(sctx, txn, r, opts...)
 }
 
-func txnCtxAddCachedTable(sctx table.MutateContext, tid int64, handle *cachedTable) {
+func txnCtxAddCachedTable(sctx table.MutateContext, tid int64, handle table.CachedTable) {
 	if s, ok := sctx.GetCachedTableSupport(); ok {
 		s.AddCachedTableHandleToTxn(tid, handle)
 	}

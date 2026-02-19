@@ -567,6 +567,7 @@ func (s *session) doCommit(ctx context.Context) error {
 
 	var commitTSChecker func(uint64) bool
 	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
+		// OLD PATH: acquire write locks for cached tables (will be removed in WORK11).
 		c := cachedTableRenewLease{tables: tables}
 		now := time.Now()
 		err := c.start(ctx)
@@ -576,6 +577,19 @@ func (s *session) doCommit(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 		commitTSChecker = c.commitTSCheck
+
+		// NEW PATH: set precommit hook for CacheDB (freecache) invalidation.
+		modifiedKeys := collectCachedTableKeys(s.txn.GetMemBuffer(), tables)
+		if len(modifiedKeys) > 0 {
+			dom := domain.GetDomain(s)
+			s.txn.SetOption(kv.PrecommitHook, func(ctx context.Context, commitTS uint64) error {
+				if err := writeInvalidationEntries(ctx, dom, modifiedKeys, commitTS); err != nil {
+					return err
+				}
+				time.Sleep(cachedTableLease)
+				return nil
+			})
+		}
 	}
 	if err = sessiontxn.GetTxnManager(s).SetOptionsBeforeCommit(s.txn.Transaction, commitTSChecker); err != nil {
 		return err
@@ -629,6 +643,79 @@ func (c *cachedTableRenewLease) commitTSCheck(commitTS uint64) bool {
 		}
 	}
 	return true
+}
+
+// cachedTableLease is the duration to wait after writing invalidation entries,
+// ensuring all nodes' pollers see the invalidation before the commit becomes visible.
+const cachedTableLease = 100 * time.Millisecond
+
+// collectCachedTableKeys collects all modified keys from the transaction's
+// mutation buffer that belong to the given cached table IDs.
+// Returns a map from tableID to the list of modified keys for that table.
+func collectCachedTableKeys(membuf kv.MemBuffer, tables map[int64]any) map[int64][]kv.Key {
+	result := make(map[int64][]kv.Key, len(tables))
+	it, err := membuf.Iter(nil, nil)
+	if err != nil {
+		return result
+	}
+	defer it.Close()
+	for it.Valid() {
+		key := it.Key()
+		tid := tablecodec.DecodeTableID(key)
+		if _, ok := tables[tid]; ok {
+			result[tid] = append(result[tid], key.Clone())
+		}
+		err = it.Next()
+		if err != nil {
+			break
+		}
+	}
+	return result
+}
+
+// writeInvalidationEntries writes per-key invalidation entries to
+// mysql.table_cache_invalidation in a separate internal transaction.
+// Each entry records (tid, cache_key, min_cached_ts = commitTS).
+func writeInvalidationEntries(ctx context.Context, dom *domain.Domain, modifiedKeys map[int64][]kv.Key, commitTS uint64) error {
+	if dom == nil {
+		return errors.New("domain not initialized")
+	}
+	sysSessionPool := dom.SysSessionPool()
+	se, err := sysSessionPool.Get()
+	if err != nil {
+		logutil.BgLogger().Warn("writeInvalidationEntries: failed to get session",
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+	defer sysSessionPool.Put(se)
+	sctx := se.(sessionctx.Context)
+	exec := sctx.GetSQLExecutor()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnCacheTable)
+
+	if _, err := exec.ExecuteInternal(ctx, "BEGIN"); err != nil {
+		logutil.BgLogger().Warn("writeInvalidationEntries: BEGIN failed",
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+	for tid, keys := range modifiedKeys {
+		for _, key := range keys {
+			if _, err := exec.ExecuteInternal(ctx,
+				"INSERT INTO mysql.table_cache_invalidation (tid, cache_key, min_cached_ts) VALUES (%?, %?, %?)",
+				tid, []byte(key), commitTS,
+			); err != nil {
+				logutil.BgLogger().Warn("writeInvalidationEntries: INSERT failed",
+					zap.Error(err), zap.Int64("tid", tid), zap.Uint64("commitTS", commitTS))
+				_, _ = exec.ExecuteInternal(ctx, "ROLLBACK")
+				return errors.Trace(err)
+			}
+		}
+	}
+	if _, err := exec.ExecuteInternal(ctx, "COMMIT"); err != nil {
+		logutil.BgLogger().Warn("writeInvalidationEntries: COMMIT failed",
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // handleAssertionFailure extracts the possible underlying assertionFailed error,

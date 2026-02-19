@@ -20,7 +20,6 @@ import (
 	_ "github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/table"
 	_ "github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/table/tblsession"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -117,14 +116,9 @@ func TestSessionMutateContextFields(t *testing.T) {
 	sctx.GetSessionVars().TxnCtx = txnCtx
 	cachedTableSupport, ok = ctx.GetCachedTableSupport()
 	require.True(t, ok)
-	type mockCachedTable struct {
-		table.CachedTable
-	}
-	handle := &mockCachedTable{}
 	require.Nil(t, sctx.GetSessionVars().TxnCtx.CachedTables[123])
-	cachedTableSupport.AddCachedTableHandleToTxn(123, handle)
-	cached := sctx.GetSessionVars().TxnCtx.CachedTables[123]
-	require.Same(t, handle, cached)
+	cachedTableSupport.AddCachedTableHandleToTxn(123, "test_handle")
+	require.Equal(t, "test_handle", sctx.GetSessionVars().TxnCtx.CachedTables[123])
 	// temporary table support
 	sctx.GetSessionVars().TxnCtx = nil
 	tempTableSupport, ok := ctx.GetTemporaryTableSupport()

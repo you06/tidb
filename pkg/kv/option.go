@@ -118,6 +118,9 @@ const (
 	BackgroundGoroutineLifecycleHooks
 	// PrewriteEncounterLockPolicy is the policy to handle lock conflict during prewrite
 	PrewriteEncounterLockPolicy
+	// PrecommitHook is called after prewrite succeeds and commitTS is determined,
+	// but before the actual commit phase. Used by cached table invalidation.
+	PrecommitHook
 )
 
 // TxnSizeLimits is the argument type for `SizeLimits` option

@@ -315,6 +315,8 @@ func (txn *tikvTxn) SetOption(opt int, val any) {
 		txn.KVTxn.SetBackgroundGoroutineLifecycleHooks(val.(transaction.LifecycleHooks))
 	case kv.PrewriteEncounterLockPolicy:
 		txn.KVTxn.SetPrewriteEncounterLockPolicy(val.(transaction.PrewriteEncounterLockPolicy))
+	case kv.PrecommitHook:
+		txn.KVTxn.SetPrecommitHook(val.(func(ctx context.Context, commitTS uint64) error))
 	}
 }
 

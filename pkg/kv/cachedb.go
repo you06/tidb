@@ -209,6 +209,13 @@ func (c *CacheDB) Delete(_ int64) {
 	c.cache.Clear()
 }
 
+// InvalidateAll clears the entire freecache. This is the safety fallback
+// when the invalidation poller has been unable to poll for longer than one
+// full lease duration, ensuring no stale data is served.
+func (c *CacheDB) InvalidateAll() {
+	c.cache.Clear()
+}
+
 // NewCacheDB creates a new CacheDB with a 1GB global freecache.
 func NewCacheDB() MemManager {
 	return &CacheDB{

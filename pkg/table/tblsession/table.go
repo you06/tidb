@@ -148,9 +148,7 @@ func (ctx *MutateContext) AddCachedTableHandleToTxn(tableID int64, handle any) {
 	if txnCtx.CachedTables == nil {
 		txnCtx.CachedTables = make(map[int64]any)
 	}
-	if _, ok := txnCtx.CachedTables[tableID]; !ok {
-		txnCtx.CachedTables[tableID] = handle
-	}
+	txnCtx.CachedTables[tableID] = handle
 }
 
 // GetTemporaryTableSupport implements the MutateContext interface.

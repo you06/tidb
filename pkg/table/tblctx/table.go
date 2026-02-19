@@ -43,9 +43,9 @@ type StatisticsSupport interface {
 
 // CachedTableSupport is used for cached table operations
 type CachedTableSupport interface {
-	// AddCachedTableHandleToTxn adds a cached handle to the current transaction
-	// to handle cached table when committing txn.
-	// The handle argument should implement `table.CachedTable` interface, but here is `any` to avoid import cycle.
+	// AddCachedTableHandleToTxn adds a cached table handle to the current transaction.
+	// The handle is used during commit to acquire write locks (old path) and
+	// to track which cached tables were modified for invalidation (new path).
 	AddCachedTableHandleToTxn(tableID int64, handle any)
 }
 

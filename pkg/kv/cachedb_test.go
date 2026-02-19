@@ -689,3 +689,32 @@ func TestCachedUnionGetManyKeys(t *testing.T) {
 	assert.Len(t, result, 1000)
 	assert.Equal(t, 1000, snap.getCount()) // no new fetches
 }
+
+func TestInvalidateAll(t *testing.T) {
+	cdb := newTestCacheDB()
+	snap := newTestSnapshot(map[string][]byte{
+		"key1": []byte("value1"),
+		"key2": []byte("value2"),
+	})
+	ctx := context.Background()
+
+	// Populate the cache.
+	_, err := cdb.CachedUnionGet(ctx, 1, 100, snap, Key("key1"))
+	require.NoError(t, err)
+	_, err = cdb.CachedUnionGet(ctx, 1, 100, snap, Key("key2"))
+	require.NoError(t, err)
+	assert.Equal(t, 2, snap.getCount())
+
+	// Verify cache hits.
+	_, err = cdb.CachedUnionGet(ctx, 1, 200, snap, Key("key1"))
+	require.NoError(t, err)
+	assert.Equal(t, 2, snap.getCount()) // no new fetches
+
+	// InvalidateAll clears the entire cache.
+	cdb.InvalidateAll()
+
+	// After invalidation, reads should go to snapshot again.
+	_, err = cdb.CachedUnionGet(ctx, 1, 200, snap, Key("key1"))
+	require.NoError(t, err)
+	assert.Equal(t, 3, snap.getCount()) // new fetch after invalidation
+}
