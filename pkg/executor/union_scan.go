@@ -56,9 +56,6 @@ type UnionScanExec struct {
 	// to make sure we can compute the virtual column in right order.
 	virtualColumnIndex []int
 
-	// cacheTable not nil means it's reading from cached table.
-	cacheTable kv.MemBuffer
-
 	// If partitioned table and the physical table id is encoded in the chuck at this column index
 	// used with dynamic prune mode
 	// < 0 if not used.
@@ -240,10 +237,6 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 }
 
 func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, error) {
-	if us.cacheTable != nil {
-		// From cache table, so the snapshot is nil
-		return nil, nil
-	}
 	if us.cursor4SnapshotRows < len(us.snapshotRows) {
 		return us.snapshotRows[us.cursor4SnapshotRows], nil
 	}

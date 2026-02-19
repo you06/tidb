@@ -15,20 +15,16 @@
 package executor_test
 
 import (
-	"context"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestBatchPointGetLockExistKey(t *testing.T) {
@@ -173,32 +169,6 @@ func TestBatchPointGetLockExistKey(t *testing.T) {
 	for err := range errCh {
 		require.NoError(t, err)
 	}
-}
-
-func TestCacheSnapShot(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	se := tk.Session()
-	ctx := context.Background()
-	txn, err := se.GetStore().Begin(tikv.WithStartTS(0))
-	memBuffer := txn.GetMemBuffer()
-	require.NoError(t, err)
-	keys := make([]kv.Key, 0, 2)
-	for i := range 2 {
-		keys = append(keys, []byte(string(rune(i))))
-	}
-	err = memBuffer.Set(keys[0], []byte("1111"))
-	require.NoError(t, err)
-	err = memBuffer.Set(keys[1], []byte("2222"))
-	require.NoError(t, err)
-	cacheTableSnapShot := executor.MockNewCacheTableSnapShot(nil, memBuffer)
-	get, err := cacheTableSnapShot.Get(ctx, keys[0])
-	require.NoError(t, err)
-	require.Equal(t, get, kv.NewValueEntry([]byte("1111"), 0))
-	batchGet, err := cacheTableSnapShot.BatchGet(ctx, keys)
-	require.NoError(t, err)
-	require.Equal(t, batchGet[string(keys[0])], kv.NewValueEntry([]byte("1111"), 0))
-	require.Equal(t, batchGet[string(keys[1])], kv.NewValueEntry([]byte("2222"), 0))
 }
 
 func TestPointGetForTemporaryTable(t *testing.T) {

@@ -71,8 +71,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -1504,13 +1502,6 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 		us.collators = append(us.collators, collate.GetCollator(tp.GetCollate()))
 	}
 
-	startTS, err := b.getSnapshotTS()
-	sessionVars := b.ctx.GetSessionVars()
-	if err != nil {
-		b.err = err
-		return nil
-	}
-
 	switch x := reader.(type) {
 	case *MPPGather:
 		us.desc = false
@@ -1519,7 +1510,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = x.virtualColumnIndex
-		us.handleCachedTable(b, x, sessionVars, startTS)
+
 	case *TableReaderExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
@@ -1536,7 +1527,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = x.virtualColumnIndex
-		us.handleCachedTable(b, x, sessionVars, startTS)
+
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
@@ -1562,7 +1553,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 		us.columns = x.columns
 		us.partitionIDMap = x.partitionIDMap
 		us.table = x.table
-		us.handleCachedTable(b, x, sessionVars, startTS)
+
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		us.keepOrder = x.keepOrder
@@ -1589,7 +1580,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 		us.table = x.table
 		us.partitionIDMap = x.partitionIDMap
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
-		us.handleCachedTable(b, x, sessionVars, startTS)
+
 	case *IndexMergeReaderExecutor:
 		if len(x.byItems) != 0 {
 			us.keepOrder = x.keepOrder
@@ -1620,31 +1611,6 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *phys
 		return nil
 	}
 	return us
-}
-
-type bypassDataSourceExecutor interface {
-	dataSourceExecutor
-	setDummy()
-}
-
-func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourceExecutor, vars *variable.SessionVars, startTS uint64) {
-	tbl := x.Table()
-	if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
-		cachedTable := tbl.(table.CachedTable)
-		// Determine whether the cache can be used.
-		leaseDuration := time.Duration(vardef.TableCacheLease.Load()) * time.Second
-		cacheData, loading := cachedTable.TryReadFromCache(startTS, leaseDuration)
-		if cacheData != nil {
-			vars.StmtCtx.ReadFromTableCache = true
-			x.setDummy()
-			us.cacheTable = cacheData
-		} else if loading {
-			return
-		} else if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
-			store := b.ctx.GetStore()
-			cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
-		}
-	}
 }
 
 // buildMergeJoin builds MergeJoinExec executor.
@@ -6136,27 +6102,6 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 		return errors.New("can not stale read temporary table")
 	}
 
-	return nil
-}
-
-func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64) kv.MemBuffer {
-	tbl, ok := b.is.TableByID(context.Background(), tblInfo.ID)
-	if !ok {
-		b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.ctx.GetSessionVars().CurrentDB, tblInfo.Name))
-		return nil
-	}
-	sessVars := b.ctx.GetSessionVars()
-	leaseDuration := time.Duration(vardef.TableCacheLease.Load()) * time.Second
-	cacheData, loading := tbl.(table.CachedTable).TryReadFromCache(startTS, leaseDuration)
-	if cacheData != nil {
-		sessVars.StmtCtx.ReadFromTableCache = true
-		return cacheData
-	} else if loading {
-		return nil
-	}
-	if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
-		tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
-	}
 	return nil
 }
 

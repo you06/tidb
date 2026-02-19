@@ -121,63 +121,6 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	return nil
 }
 
-// CacheTable always use memBuffer in session as snapshot.
-// cacheTableSnapshot inherits kv.Snapshot and override the BatchGet methods and Get methods.
-type cacheTableSnapshot struct {
-	kv.Snapshot
-	memBuffer kv.MemBuffer
-}
-
-func (s cacheTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
-	if len(options) > 0 {
-		var opt tikv.BatchGetOptions
-		opt.Apply(options)
-		if opt.ReturnCommitTS() {
-			return nil, errors.New("WithReturnCommitTS option is not supported for cacheTableSnapshot.BatchGet")
-		}
-	}
-	values := make(map[string]kv.ValueEntry)
-	if s.memBuffer == nil {
-		return values, nil
-	}
-
-	getOptions := kv.BatchGetToGetOptions(options)
-	for _, key := range keys {
-		val, err := s.memBuffer.Get(ctx, key, getOptions...)
-		if kv.ErrNotExist.Equal(err) {
-			continue
-		}
-
-		if err != nil {
-			return nil, err
-		}
-
-		if val.IsValueEmpty() {
-			continue
-		}
-
-		values[string(key)] = val
-	}
-
-	return values, nil
-}
-
-func (s cacheTableSnapshot) Get(ctx context.Context, key kv.Key, options ...kv.GetOption) (kv.ValueEntry, error) {
-	if len(options) > 0 {
-		var opt tikv.GetOptions
-		opt.Apply(options)
-		if opt.ReturnCommitTS() {
-			return kv.ValueEntry{}, errors.New("WithReturnCommitTS option is not supported for cacheTableSnapshot.Get")
-		}
-	}
-	return s.memBuffer.Get(ctx, key, options...)
-}
-
-// MockNewCacheTableSnapShot only serves for test.
-func MockNewCacheTableSnapShot(snapshot kv.Snapshot, memBuffer kv.MemBuffer) *cacheTableSnapshot {
-	return &cacheTableSnapshot{snapshot, memBuffer}
-}
-
 // Close implements the Executor interface.
 func (e *BatchPointGetExec) Close() error {
 	if e.RuntimeStats() != nil {
