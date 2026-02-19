@@ -781,6 +781,14 @@ const (
         description text,
         primary key(module, name));`
 
+	// CreateTableCacheInvalidationTable stores per-key cache invalidation entries for cached tables.
+	CreateTableCacheInvalidationTable = `CREATE TABLE IF NOT EXISTS mysql.table_cache_invalidation (
+		tid BIGINT NOT NULL,
+		cache_key VARBINARY(4096) NOT NULL,
+		min_cached_ts BIGINT UNSIGNED NOT NULL,
+		INDEX idx_tid_ts (tid, min_cached_ts)
+	);`
+
 	// CreateTiDBWorkloadValuesTable is a table to store workload-based learning values for tidb.
 	CreateTiDBWorkloadValuesTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_workload_values (
 		id bigint(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
