@@ -64,7 +64,7 @@ type TableCommon struct {
 	Columns         []*table.Column
 
 	// column caches
-	// They are pointers to support copying TableCommon to CachedTable and PartitionedTable
+	// They are pointers to support copying TableCommon to PartitionedTable
 	publicColumns                   []*table.Column
 	visibleColumns                  []*table.Column
 	hiddenColumns                   []*table.Column

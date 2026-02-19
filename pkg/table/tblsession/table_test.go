@@ -117,8 +117,10 @@ func TestSessionMutateContextFields(t *testing.T) {
 	cachedTableSupport, ok = ctx.GetCachedTableSupport()
 	require.True(t, ok)
 	require.Nil(t, sctx.GetSessionVars().TxnCtx.CachedTables[123])
-	cachedTableSupport.AddCachedTableHandleToTxn(123, "test_handle")
-	require.Equal(t, "test_handle", sctx.GetSessionVars().TxnCtx.CachedTables[123])
+	cachedTableSupport.MarkCachedTableModified(123)
+	require.Nil(t, sctx.GetSessionVars().TxnCtx.CachedTables[123])
+	_, exists := sctx.GetSessionVars().TxnCtx.CachedTables[123]
+	require.True(t, exists)
 	// temporary table support
 	sctx.GetSessionVars().TxnCtx = nil
 	tempTableSupport, ok := ctx.GetTemporaryTableSupport()

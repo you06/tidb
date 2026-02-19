@@ -43,10 +43,10 @@ type StatisticsSupport interface {
 
 // CachedTableSupport is used for cached table operations
 type CachedTableSupport interface {
-	// AddCachedTableHandleToTxn adds a cached table handle to the current transaction.
-	// The handle is used during commit to acquire write locks (old path) and
-	// to track which cached tables were modified for invalidation (new path).
-	AddCachedTableHandleToTxn(tableID int64, handle any)
+	// MarkCachedTableModified marks a cached table as modified in the current transaction.
+	// During commit, the session uses this to write per-key invalidation entries
+	// so that other nodes' CacheDB pollers evict stale data.
+	MarkCachedTableModified(tableID int64)
 }
 
 // TemporaryTableHandler is used by `table.Table` to handle temporary table.

@@ -142,13 +142,13 @@ func (ctx *MutateContext) GetCachedTableSupport() (tblctx.CachedTableSupport, bo
 	return nil, false
 }
 
-// AddCachedTableHandleToTxn implements `CachedTableSupport` interface
-func (ctx *MutateContext) AddCachedTableHandleToTxn(tableID int64, handle any) {
+// MarkCachedTableModified implements `CachedTableSupport` interface
+func (ctx *MutateContext) MarkCachedTableModified(tableID int64) {
 	txnCtx := ctx.vars().TxnCtx
 	if txnCtx.CachedTables == nil {
 		txnCtx.CachedTables = make(map[int64]any)
 	}
-	txnCtx.CachedTables[tableID] = handle
+	txnCtx.CachedTables[tableID] = nil
 }
 
 // GetTemporaryTableSupport implements the MutateContext interface.
