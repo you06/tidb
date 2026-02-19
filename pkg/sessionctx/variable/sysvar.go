@@ -1079,13 +1079,8 @@ var defaultSysVars = []*SysVar{
 		vardef.GCMaxWaitTime.Store(TidbOptInt64(val, vardef.DefTiDBGCMaxWaitTime))
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBTableCacheLease, Value: strconv.Itoa(vardef.DefTiDBTableCacheLease), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: 10, SetGlobal: func(_ context.Context, s *SessionVars, sVal string) error {
-		var val int64
-		val, err := strconv.ParseInt(sVal, 10, 64)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		vardef.TableCacheLease.Store(val)
+	// TiDBTableCacheLease is deprecated and kept for compatibility only (no-op).
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBTableCacheLease, Value: strconv.Itoa(vardef.DefTiDBTableCacheLease), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: 10, SetGlobal: func(_ context.Context, _ *SessionVars, _ string) error {
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAutoAnalyzePartitionBatchSize,

@@ -381,7 +381,7 @@ type StatementContext struct {
 
 	SetVarHintRestore map[string]string
 
-	// If the statement read from table cache, this flag is set.
+	// ReadFromTableCache indicates whether the statement had cache hits on cached tables.
 	ReadFromTableCache bool
 
 	// cache is used to reduce object allocation.

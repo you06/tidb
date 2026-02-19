@@ -71,7 +71,6 @@ var (
 	PDAPIExecutionHistogram         *prometheus.HistogramVec
 	PDAPIRequestCounter             *prometheus.CounterVec
 	CPUProfileCounter               prometheus.Counter
-	LoadTableCacheDurationHistogram prometheus.Histogram
 	RCCheckTSWriteConfilictCounter  *prometheus.CounterVec
 	MemoryLimit                     prometheus.Gauge
 	InternalSessions                prometheus.Gauge
@@ -384,15 +383,6 @@ func InitServerMetrics() {
 			Subsystem: "server",
 			Name:      "cpu_profile_total",
 			Help:      "Counter of cpu profiling",
-		})
-
-	LoadTableCacheDurationHistogram = metricscommon.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "server",
-			Name:      "load_table_cache_seconds",
-			Help:      "Duration (us) for loading table cache.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1us ~ 528s
 		})
 
 	RCCheckTSWriteConfilictCounter = metricscommon.NewCounterVec(

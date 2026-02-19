@@ -239,7 +239,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PDAPIRequestCounter)
 	prometheus.MustRegister(CPUProfileCounter)
 	prometheus.MustRegister(ReadFromTableCacheCounter)
-	prometheus.MustRegister(LoadTableCacheDurationHistogram)
 	prometheus.MustRegister(NonTransactionalDMLCount)
 	prometheus.MustRegister(PessimisticDMLDurationByAttempt)
 	prometheus.MustRegister(ResetAutoIDConnCounter)
@@ -386,7 +385,6 @@ func ToggleSimplifiedMode(simplified bool) {
 	var unusedMetricsByGrafana = []prometheus.Collector{
 		StatementDeadlockDetectDuration,
 		ValidateReadTSFromPDCount,
-		LoadTableCacheDurationHistogram,
 		TxnWriteThroughput,
 		SmallTxnWriteDuration,
 		InfoCacheCounters,

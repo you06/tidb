@@ -858,7 +858,8 @@ const (
 	// TiDBEnableLegacyInstanceScope indicates if instance scope can be set with SET SESSION.
 	TiDBEnableLegacyInstanceScope = "tidb_enable_legacy_instance_scope"
 
-	// TiDBTableCacheLease indicates the read lock lease of a cached table.
+	// TiDBTableCacheLease is deprecated and kept for compatibility only (no-op).
+	// It previously indicated the read lock lease of a cached table.
 	TiDBTableCacheLease = "tidb_table_cache_lease"
 
 	// TiDBStatsLoadSyncWait indicates the time sql execution will sync-wait for stats load.
@@ -1819,7 +1820,6 @@ var (
 	RestrictedReadOnly                   = atomic.NewBool(DefTiDBRestrictedReadOnly)
 	VarTiDBSuperReadOnly                 = atomic.NewBool(DefTiDBSuperReadOnly)
 	PersistAnalyzeOptions                = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
-	TableCacheLease                      = atomic.NewInt64(DefTiDBTableCacheLease)
 	StatsLoadSyncWait                    = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout               = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 	MemQuotaBindingCache                 = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
