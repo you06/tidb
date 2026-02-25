@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	// globalCacheSize is the size of the global freecache (1GB).
-	globalCacheSize = 1024 * 1024 * 1024
+	// globalCacheSize is the size of the global freecache (16GB).
+	globalCacheSize = 16 * 1024 * 1024 * 1024
 	// tsLen is the byte length of an encoded uint64 timestamp.
 	tsLen = 8
 	// tidLen is the byte length of an encoded int64 table ID.
@@ -36,7 +36,7 @@ type (
 	// It uses a single freecache instance with LRU eviction and supports
 	// per-key invalidation via the invalidatedKeys map.
 	CacheDB struct {
-		cache           *freecache.Cache // 1GB global, stores cached row data
+		cache           *freecache.Cache // 16GB global, stores cached row data
 		invalidatedKeys sync.Map         // map[string]uint64 - cacheKey -> min_cached_ts (per-key)
 		cachedTables    sync.Map         // map[int64]struct{} - set of registered cached table IDs
 	}
@@ -216,7 +216,7 @@ func (c *CacheDB) InvalidateAll() {
 	c.cache.Clear()
 }
 
-// NewCacheDB creates a new CacheDB with a 1GB global freecache.
+// NewCacheDB creates a new CacheDB with a 16GB global freecache.
 func NewCacheDB() MemManager {
 	return &CacheDB{
 		cache: freecache.NewCache(globalCacheSize),
